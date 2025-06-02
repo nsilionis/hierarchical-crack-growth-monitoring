@@ -148,3 +148,90 @@ def paris_params_pair_plot(paris_c, paris_m, save_fig_name=None):
     # Show plot
     plt.show()
     return g
+
+
+def plot_initial_crack_length(initial_crack_length, save_fig_name=None):
+    """
+    Plot the initial crack length as a histogram.
+    -----------
+    Parameters
+    ----------
+    initial_crack_length : np.ndarray
+        Array of initial crack lengths.
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name.
+        If None, the figure will not be saved.
+    -----------
+    Raises
+    ------
+    ValueError
+        If `initial_crack_length` is not a 1D array.
+    """
+    if initial_crack_length.ndim != 1:
+        raise ValueError("""`initial_crack_length` must be a 1D array.""")
+    # Create figure and axis
+    fig, ax = plt.subplots(1, 1)
+    # Plot histogram
+    cmap = plt.get_cmap('tab20c')
+    sns.histplot(initial_crack_length, kde=True, ax=ax,
+                 color=cmap(6), edgecolor='white', alpha=0.7,
+                 stat='density')
+    # Set ticks
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # Set labels
+    ax.set_xlabel(r'$\alpha_0$ [mm]')
+    ax.set_ylabel('Density')
+    if save_fig_name is not None:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        fname = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not fname.parent.exists():
+            raise FileNotFoundError("""Directory {fname.parent}
+                                    does not exist.""")
+        # Save the figure
+        plt.savefig(fname, bbox_inches='tight')
+    plt.show()
+
+
+def plot_avg_cycles(avg_cycles, save_fig_name=None):
+    """
+    Plot the average number of cycles per load realisation
+    as a histogram.
+    -----------
+    Parameters
+    ----------
+    avg_cycles : np.ndarray
+        Array of average cycles per load realisation.
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name.
+        If None, the figure will not be saved.
+    -----------
+    """
+    # Create figure and axis
+    fig, ax = plt.subplots(1, 1)
+    # Plot histogram
+    cmap = plt.get_cmap('tab20c')
+    sns.histplot(np.mean(avg_cycles, axis=1), kde=True, ax=ax,
+                 color=cmap(13), edgecolor='white', alpha=0.7,
+                 stat='density')
+    # Set ticks
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # Set labels
+    ax.set_xlabel(r'$N_{\mathrm{avg}}$ [cycles/load]')
+    ax.set_ylabel('Density')
+    if save_fig_name is not None:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        fname = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not fname.parent.exists():
+            raise FileNotFoundError("""Directory {fname.parent}
+                                    does not exist.""")
+        # Save the figure
+        plt.savefig(fname, bbox_inches='tight')
+    plt.show()
