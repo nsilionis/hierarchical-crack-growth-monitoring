@@ -59,7 +59,15 @@ class ParisErdogan:
         self.a0 = a0
         self.t = t
         self.Y = Y
-        self.dt = t[1] - t[0]  # Calculate time step size
+
+        # Check that t has at least 2 elements before calculating dt
+        if len(t) >= 2:
+            self.dt = t[1] - t[0]
+        else:
+            # Handle the case when t has fewer than 2 elements
+            self.dt = 0.01  # Default time step value
+            print(f"""Warning: Time array has {len(t)} elements.
+                   Using default dt={self.dt}""")
 
     def SIF(self, a):
         """
