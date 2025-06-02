@@ -15,7 +15,6 @@ class SCGDataLoader:
         """
         Initializes the SCGDataLoader with the path to the dataset.
 
-        -------
         Attributes
         root_dir : Path
             The root directory of the project.
@@ -55,7 +54,6 @@ class SCGDataLoader:
         - 'initial_crack_length': The initial crack length (mm)
         The values are 2D numpy arrays with varying shapes/sizes.
 
-        -------
         Returns
         -------
         data : dict
