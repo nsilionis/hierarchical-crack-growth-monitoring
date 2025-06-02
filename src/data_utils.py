@@ -48,6 +48,7 @@ class SCGDataLoader:
         - 'times': time instants of the crack growth (years)
         - 'avg_cycles': average number of cycles per load
         realisation
+        - 'stress_ranges': stress range realisations (MPa)
         - 'crack_lengths': crack lengths at each time instant (mm)
         - 'paris_c': The C coefficient of the Paris law
         - 'paris_m': The m coefficient of the Paris law
@@ -117,10 +118,18 @@ class SCGDataLoader:
                                            allow_pickle=False)
             # Reshape the initial crack length array
             initial_crack_length = initial_crack_length[:, 0]
+        # Load the stress ranges
+        if not (self.data_dir / 'stress_range.npy').exists():
+            raise FileNotFoundError(f"""File 'stress_range.npy' does not
+                                    exist in directory {self.data_dir}.""")
+        else:
+            stress_ranges = np.load(self.data_dir / 'stress_range.npy',
+                                    allow_pickle=False)
         # Pack the data into a dictionary
         data = {
             'times': times,
             'avg_cycles': avg_cycles,
+            'stress_ranges': stress_ranges,
             'crack_lengths': crack_lengths,
             'paris_c': paris_c,
             'paris_m': paris_m,
