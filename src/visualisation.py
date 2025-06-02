@@ -4,6 +4,7 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from src.predictive_models import CrackGrowthPredictor
 
 plt.rcParams.update({"text.usetex": True,
                      "font.family": "sans-serif",
@@ -275,3 +276,115 @@ def plot_stress_ranges(stress_ranges, save_fig_name=None):
         # Save the figure
         plt.savefig(fname, bbox_inches='tight')
     plt.show()
+
+
+def plot_paris_predictions(paris_params, ds, navg, a0, times,
+                           save_fig_name=None, figsize=(12, 8),
+                           plot_individual=True, plot_grid=True):
+    """
+    Plot detailed Paris law predictions with various visualization options.
+
+    Parameters
+    ----------
+    paris_params : tuple
+        Tuple containing (C, m) Paris law parameters
+    ds : float or array
+        Stress range(s)
+    navg : float or array
+        Average number of cycles per time unit
+    a0 : float or array
+        Initial crack length(s)
+    times : array
+        Time points for prediction (can be 1D or 2D array)
+    save_fig_name : str, optional
+        Filename to save the figure
+    figsize : tuple, optional
+        Figure size
+    plot_individual : bool, optional
+        Whether to plot individual curves
+    plot_grid : bool, optional
+        Whether to show grid lines
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes
+        The axes object
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Create predictor
+    predictor = CrackGrowthPredictor()
+
+    # Convert paris_params to numpy arrays if needed
+    C, m = paris_params
+    if not isinstance(C, np.ndarray):
+        C = np.array([C])
+    if not isinstance(m, np.ndarray):
+        m = np.array([m])
+
+    # Ensure times is properly formatted
+    if len(times.shape) > 1:
+        # We have multiple time series
+        time_array = times
+    else:
+        # We have a single time series - use it for all predictions
+        time_array = np.tile(times, (len(C), 1))
+
+    # Get predictions
+    crack_lengths = []
+    for i in range(len(C)):
+        # Convert C to logC (natural logarithm)
+        logc = np.log(C[i])
+
+        # Use appropriate time array
+        t_arr = time_array[i] if len(times.shape) > 1 else times
+
+        # Get prediction
+        cl = predictor.predict_crack_growth(
+            logc=logc,
+            m=m[i],
+            ds=ds[i] if isinstance(ds, np.ndarray) else ds,
+            navg=navg[i] if isinstance(navg, np.ndarray) else navg,
+            a0=a0[i] if isinstance(a0, np.ndarray) else a0,
+            times=t_arr
+        )
+        crack_lengths.append(cl)
+
+    # Create figure and plot results
+    fig, ax = plt.subplots(figsize=figsize)
+    # Set colormap
+    cmap = plt.get_cmap('tab20c')
+    # Plot each prediction
+    for i in range(len(crack_lengths)):
+        t_arr = time_array[i] if len(times.shape) > 1 else times
+        ax.plot(t_arr, crack_lengths[i], color=cmap(i),
+                label=f"$\\alpha_{{{i+1}}}$")
+
+    # Set labels and title
+    ax.set_xlabel("Time (years)")
+    ax.set_ylabel("Crack Length (mm)")
+    # ax.set_title("Crack Growth Predictions")
+
+    # Add grid if requested
+    if plot_grid:
+        ax.grid(True, linestyle='--', alpha=0.7)
+
+    # Add legend
+    ax.legend()
+
+    # Save figure if requested
+    if save_fig_name:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"""Directory {save_path.parent}
+                                    does not exist.""")
+        plt.savefig(save_path, bbox_inches="tight")
+
+    return fig, ax
