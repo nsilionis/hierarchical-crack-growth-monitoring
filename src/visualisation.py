@@ -15,7 +15,7 @@ def plot_scg_data(times, crack_lengths, save_fig_name=None):
     Plotting function that plots the crack length
     as a function of time using the stochastic
     crack growth data.
-    -----------
+
     Parameters
     ----------
     times : np.ndarray
@@ -88,7 +88,7 @@ def paris_params_pair_plot(paris_c, paris_m, save_fig_name=None):
     """
     Plot the Paris law parameters C and m
     using a pair plot.
-    -----------
+
     Parameters
     ----------
     paris_c : np.ndarray
@@ -153,7 +153,7 @@ def paris_params_pair_plot(paris_c, paris_m, save_fig_name=None):
 def plot_initial_crack_length(initial_crack_length, save_fig_name=None):
     """
     Plot the initial crack length as a histogram.
-    -----------
+
     Parameters
     ----------
     initial_crack_length : np.ndarray
@@ -200,7 +200,7 @@ def plot_avg_cycles(avg_cycles, save_fig_name=None):
     """
     Plot the average number of cycles per load realisation
     as a histogram.
-    -----------
+
     Parameters
     ----------
     avg_cycles : np.ndarray
@@ -240,7 +240,7 @@ def plot_avg_cycles(avg_cycles, save_fig_name=None):
 def plot_stress_ranges(stress_ranges, save_fig_name=None):
     """
     Plot the stress ranges as a histogram.
-    -----------
+
     Parameters
     ----------
     stress_ranges : np.ndarray
