@@ -221,7 +221,47 @@ def plot_avg_cycles(avg_cycles, save_fig_name=None):
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     # Set labels
-    ax.set_xlabel(r'$N_{\mathrm{avg}}$ [cycles/load]')
+    ax.set_xlabel(r'$N_{\mathrm{avg}}$ [cycles/year]')
+    ax.set_ylabel('Density')
+    if save_fig_name is not None:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        fname = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not fname.parent.exists():
+            raise FileNotFoundError("""Directory {fname.parent}
+                                    does not exist.""")
+        # Save the figure
+        plt.savefig(fname, bbox_inches='tight')
+    plt.show()
+
+
+def plot_stress_ranges(stress_ranges, save_fig_name=None):
+    """
+    Plot the stress ranges as a histogram.
+    -----------
+    Parameters
+    ----------
+    stress_ranges : np.ndarray
+        Array of stress ranges.
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name.
+        If None, the figure will not be saved.
+    -----------
+    """
+    # Create figure and axis
+    fig, ax = plt.subplots(1, 1)
+    # Plot histogram
+    cmap = plt.get_cmap('tab20c')
+    sns.histplot(stress_ranges[:, 0], kde=True, ax=ax,
+                 color=cmap(4), edgecolor='white', alpha=0.7,
+                 stat='density')
+    # Set ticks
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # Set labels
+    ax.set_xlabel(r'$\Delta S$ [MPa]')
     ax.set_ylabel('Density')
     if save_fig_name is not None:
         # Get the root directory of the project
