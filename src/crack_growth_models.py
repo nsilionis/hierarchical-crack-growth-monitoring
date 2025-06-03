@@ -76,43 +76,94 @@ class BaseCrackGrowthModel(ABC):
     loading conditions.
     """
 
-    def __init__(self, logc, m, navg, a0, t, sif_calculator=None):
+    # Define required and optional parameters
+    required_params = ['logc', 'm', 'navg', 'a0', 't']
+    optional_params = ['sif_calculator']
+
+    def __init__(self, **params):
         """
         Initialize the base crack growth model.
 
         Parameters
         ----------
-        logc : float
-            Natural logarithm of the material parameter C
-        m : float
-            Material exponent
-        navg : float
-            Average number of cycles per time unit
-        a0 : float
-            Initial crack length
-        t : array
-            Time points for evaluation
-        sif_calculator : SIFCalculator, optional
-            Calculator for Stress Intensity Factor,
-            defaults to SimpleGeometrySIF
-        """
-        self.logc = logc
-        self.m = m
-        self.navg = navg
-        self.a0 = a0
-        self.t = t
+        **params : dict
+            Dictionary of parameters including:
+            - logc : float
+                Natural logarithm of the material parameter C
+            - m : float
+                Material exponent
+            - navg : float
+                Average number of cycles per time unit
+            - a0 : float
+                Initial crack length
+            - t : array
+                Time points for evaluation
+            - sif_calculator : SIFCalculator, optional
+                Calculator for Stress Intensity Factor
 
-        # Set default SIF calculator if none provided
-        self.sif_calculator = sif_calculator or SimpleGeometrySIF()
+            Subclasses may require additional parameters.
+        """
+        # Validate required parameters
+        self._validate_required_params(params)
+
+        # Store all parameters
+        self.params = params
+
+        # Extract common parameters for convenience
+        self.logc = params['logc']
+        self.m = params['m']
+        self.navg = params['navg']
+        self.a0 = params['a0']
+        self.t = params['t']
+
+        # Handle common optional parameters
+        self.sif_calculator = params.get('sif_calculator', SimpleGeometrySIF())
 
         # Calculate time step if possible
-        if len(t) >= 2:
-            self.dt = t[1] - t[0]
+        if len(self.t) >= 2:
+            self.dt = self.t[1] - self.t[0]
         else:
             self.dt = 0.01  # Default time step
-            print(f"Warning: Time array has {len(t)} elements.\
+            print(f"Warning: Time array has {len(self.t)} elements. \
                    Using default dt={self.dt}")
 
+        # Call subclass-specific initialization
+        self._init_subclass_params()
+
+    def _validate_required_params(self, params):
+        """
+        Validate that all required parameters are present.
+
+        Parameters
+        ----------
+        params : dict
+            Dictionary of parameters to validate
+
+        Raises
+        ------
+        ValueError
+            If any required parameter is missing
+        """
+        missing_params = []
+        for param in self.required_params:
+            if param not in params:
+                missing_params.append(param)
+
+        if missing_params:
+            raise ValueError(f"Missing required parameters: \
+                             {', '.join(missing_params)}")
+
+    @abstractmethod
+    def _init_subclass_params(self):
+        """
+        Hook for subclasses to initialize their specific parameters.
+
+        This method should be implemented by all subclasses to
+        extract and validate their specific parameters from self.params.
+        """
+        pass
+
+    @abstractmethod
     def SIF(self, a, ds=None):
         """
         Calculate Stress Intensity Factor using the assigned calculator.
@@ -129,11 +180,7 @@ class BaseCrackGrowthModel(ABC):
         float or array
             Stress Intensity Factor
         """
-        # This should be implemented by child classes which know
-        # how to determine the stress range
-        raise NotImplementedError(
-            "Child classes must implement the SIF method"
-        )
+        pass
 
     @abstractmethod
     def state_eq(self, x, t=None):
@@ -166,35 +213,19 @@ class ParisErdogan(BaseCrackGrowthModel):
     and ΔK is the stress intensity factor range.
     """
 
-    def __init__(self, logc, m, ds, navg, a0, t, sif_calculator=None, Y=1.12):
-        """
-        Initialize the Paris-Erdogan model with constant stress range.
+    # Add model-specific required parameters
+    required_params = BaseCrackGrowthModel.required_params + ['ds']
 
-        Parameters
-        ----------
-        logc : float
-            Natural logarithm of the Paris law coefficient C
-        m : float
-            Paris law exponent
-        ds : float
-            Stress range (constant for all time points)
-        navg : float
-            Average number of cycles per time unit
-        a0 : float
-            Initial crack length
-        t : array
-            Time points for evaluation
-        sif_calculator : SIFCalculator, optional
-            Calculator for SIF, defaults to SimpleGeometrySIF
-        Y : float, optional
-            Geometry correction factor, used only if sif_calculator is None
+    def _init_subclass_params(self):
         """
-        # If Y is provided but not sif_calculator, create one with the Y value
-        if sif_calculator is None and Y != 1.12:
-            sif_calculator = SimpleGeometrySIF(Y=Y)
+        Initialize Paris-Erdogan specific parameters
+        """
+        self.ds = self.params['ds']
 
-        super().__init__(logc, m, navg, a0, t, sif_calculator)
-        self.ds = ds
+        # Handle Y factor if provided directly
+        # instead of through a SIF calculator
+        if 'Y' in self.params and 'sif_calculator' not in self.params:
+            self.sif_calculator = SimpleGeometrySIF(Y=self.params['Y'])
 
     def SIF(self, a, ds=None):
         """
@@ -279,7 +310,7 @@ class ParisErdogan(BaseCrackGrowthModel):
         x : float or array
             Current crack length
         t : float, optional
-            Current time
+            Current time (not used for constant stress)
 
         Returns
         -------
@@ -287,8 +318,8 @@ class ParisErdogan(BaseCrackGrowthModel):
             Updated crack length after one time step
         """
         # Vectorize this operation for efficiency when x is an array
-        x = x + self.navg * self.dt * (jnp.exp(self.logc)
-                                       * (self.SIF(x))**self.m)
+        x = x + self.navg * self.dt * (jnp.exp(self.logc) *
+                                       (self.SIF(x))**self.m)
         return x
 
 
@@ -300,40 +331,26 @@ class VariableStressParisErdogan(BaseCrackGrowthModel):
     stress ranges at different time intervals.
     """
 
-    def __init__(self, logc, m, ds_array, navg, a0, t, sif_calculator=None):
-        """
-        Initialize the Paris-Erdogan model with variable stress ranges.
+    # Add model-specific required parameters
+    required_params = BaseCrackGrowthModel.required_params + ['ds_array']
 
-        Parameters
-        ----------
-        logc : float
-            Natural logarithm of the Paris law coefficient C
-        m : float
-            Paris law exponent
-        ds_array : array
-            Array of stress ranges per time interval.
-            Should have length len(t)-1, where each value is the
-            stress range for the interval [t[i], t[i+1]]
-        navg : float
-            Average number of cycles per time unit
-        a0 : float
-            Initial crack length
-        t : array
-            Time points for evaluation
-        sif_calculator : SIFCalculator, optional
-            Calculator for SIF, defaults to SimpleGeometrySIF
+    def _init_subclass_params(self):
         """
-        super().__init__(logc, m, navg, a0, t, sif_calculator)
-
-        # Validate that ds_array has the correct length (one per time interval)
-        expected_length = len(t) - 1
+        Initialize variable stress model parameters
+        """
+        # Validate and store ds_array
+        ds_array = self.params['ds_array']
+        expected_length = len(self.t) - 1
         if len(ds_array) != expected_length:
             raise ValueError(f"ds_array must have length {expected_length} "
                              f"(one per time interval), "
                              f"but got {len(ds_array)}")
 
-        # Store the stress range array
         self.ds_array = np.array(ds_array)
+
+        # Handle Y factor if provided directly
+        if 'Y' in self.params and 'sif_calculator' not in self.params:
+            self.sif_calculator = SimpleGeometrySIF(Y=self.params['Y'])
 
     def get_stress_range(self, time):
         """
