@@ -1,6 +1,182 @@
 import numpy as np
 import jax.numpy as jnp
+from abc import ABC, abstractmethod
 from src.crack_growth_models import ParisErdogan
+
+
+class ObservationModel(ABC):
+    """
+    Abstract base class for observation models.
+
+    Observation models transform the true system state (crack length)
+    into observed measurements. This could include noise, bias,
+    or other measurement effects.
+    """
+
+    @abstractmethod
+    def observe(self, x, t=None):
+        """
+        Transform true state to observed state.
+
+        Parameters
+        ----------
+        x : float or array
+            True state (e.g., crack length)
+        t : float or array, optional
+            Time of observation
+
+        Returns
+        -------
+        float or array
+            Observed state
+        """
+        pass
+
+
+class IdentityObservation(ObservationModel):
+    """
+    Identity observation model that returns the state unchanged.
+    """
+
+    def observe(self, x, t=None):
+        """
+        Return the state unchanged.
+
+        Parameters
+        ----------
+        x : float or array
+            True state (e.g., crack length)
+        t : float or array, optional
+            Time of observation (not used)
+
+        Returns
+        -------
+        float or array
+            Same as input state
+        """
+        return x
+
+
+class LinearObservation(ObservationModel):
+    """
+    Linear observation model with scaling and offset.
+
+    Implements y = a*x + b transformation.
+    """
+
+    def __init__(self, scale=1.0, offset=0.0):
+        """
+        Initialize with scaling factor and offset.
+
+        Parameters
+        ----------
+        scale : float, optional
+            Scaling factor for the state
+        offset : float, optional
+            Offset to add after scaling
+        """
+        self.scale = scale
+        self.offset = offset
+
+    def observe(self, x, t=None):
+        """
+        Apply linear transformation to state.
+
+        Parameters
+        ----------
+        x : float or array
+            True state (e.g., crack length)
+        t : float or array, optional
+            Time of observation (not used)
+
+        Returns
+        -------
+        float or array
+            Transformed state: scale*x + offset
+        """
+        return self.scale * x + self.offset
+
+
+class GaussianNoiseObservation(ObservationModel):
+    """
+    Observation model that adds Gaussian noise to the state.
+    """
+
+    def __init__(self, std_dev, random_seed=None):
+        """
+        Initialize with noise standard deviation.
+
+        Parameters
+        ----------
+        std_dev : float
+            Standard deviation of the Gaussian noise
+        random_seed : int, optional
+            Random seed for reproducibility
+        """
+        self.std_dev = std_dev
+        self.rng = np.random.RandomState(random_seed)
+
+    def observe(self, x, t=None):
+        """
+        Add Gaussian noise to the state.
+
+        Parameters
+        ----------
+        x : float or array
+            True state (e.g., crack length)
+        t : float or array, optional
+            Time of observation (not used)
+
+        Returns
+        -------
+        float or array
+            State with added noise
+        """
+        # Generate noise with appropriate shape
+        if isinstance(x, (np.ndarray, jnp.ndarray)):
+            noise = self.rng.normal(0, self.std_dev, size=x.shape)
+        else:
+            noise = self.rng.normal(0, self.std_dev)
+
+        return x + noise
+
+
+class CompositeObservation(ObservationModel):
+    """
+    Combines multiple observation models in sequence.
+    """
+
+    def __init__(self, observation_models):
+        """
+        Initialize with a list of observation models.
+
+        Parameters
+        ----------
+        observation_models : list
+            List of observation models to apply in sequence
+        """
+        self.models = observation_models
+
+    def observe(self, x, t=None):
+        """
+        Apply all observation models in sequence.
+
+        Parameters
+        ----------
+        x : float or array
+            True state (e.g., crack length)
+        t : float or array, optional
+            Time of observation
+
+        Returns
+        -------
+        float or array
+            State after all transformations
+        """
+        result = x
+        for model in self.models:
+            result = model.observe(result, t)
+        return result
 
 
 class CrackGrowthPredictor:
@@ -10,19 +186,23 @@ class CrackGrowthPredictor:
     as a component in Bayesian models.
     """
 
-    def __init__(self, Y=1.12):
+    def __init__(self, Y=1.12, observation_model=None):
         """
-        Initialize the predictor with a default geometry factor.
+        Initialize the predictor.
 
         Parameters
         ----------
-        geometry_factor : float, optional
+        Y : float, optional
             The geometry factor Y for the stress intensity factor calculation.
             Default is 1.12 for a standard geometry.
+        observation_model : ObservationModel, optional
+            Model for transforming true crack lengths to observations
         """
         self.Y = Y
+        self.observation_model = observation_model or IdentityObservation()
 
-    def predict_crack_growth(self, logc, m, ds, navg, a0, times):
+    def predict_crack_growth(self, logc, m, ds, navg,
+                             a0, times, include_observations=True):
         """
         Predict crack growth using the Paris-Erdogan model.
 
@@ -42,6 +222,8 @@ class CrackGrowthPredictor:
             Time points for prediction.
             Can be 1D array (same times for all samples) or
             2D array of shape (n_samples, n_times)
+        include_observations : bool, optional
+            Whether to apply the observation model to the predictions
 
         Returns
         -------
@@ -102,7 +284,7 @@ class CrackGrowthPredictor:
             crack_lengths = np.zeros_like(times)
 
             # Compute crack growth for each set of parameters
-            #  with its own time series
+            # with its own time series
             for i in range(n_samples):
                 paris = ParisErdogan(
                     logc=logc[i],
@@ -164,9 +346,33 @@ class CrackGrowthPredictor:
                 for j in range(1, len(times)):
                     crack_lengths[i, j] = paris.state_eq(crack_lengths[i, j-1])
 
+        # Apply observation model if requested
+        if include_observations and self.observation_model is not None:
+            # Make a copy to avoid modifying the original true crack lengths
+            observed_lengths = np.copy(crack_lengths)
+
+            # Apply observation model to each trajectory and time point
+            if observed_lengths.ndim == 1:
+                # Single trajectory
+                for j in range(len(observed_lengths)):
+                    observed_lengths[j] = self.observation_model.observe(
+                        observed_lengths[j], times[j]
+                        if len(times.shape) > 1 else times[j])
+            else:
+                # Multiple trajectories
+                for i in range(observed_lengths.shape[0]):
+                    for j in range(observed_lengths.shape[1]):
+                        observed_lengths[i, j] = \
+                            self.observation_model.observe(
+                                observed_lengths[i, j], times[i, j]
+                                if len(times.shape) > 1 else times[j]
+                        )
+
+            crack_lengths = observed_lengths
+
         # If input was a single set of parameters, return a single trajectory
-        if (len(times.shape) == 1 and batch_size == 1) \
-                or (len(times.shape) > 1 and n_samples == 1):
+        if (len(times.shape) == 1 and batch_size == 1) or \
+                (len(times.shape) > 1 and n_samples == 1):
             return crack_lengths[0]
         else:
             return crack_lengths
