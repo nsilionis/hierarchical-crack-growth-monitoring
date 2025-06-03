@@ -279,7 +279,7 @@ def plot_stress_ranges(stress_ranges, save_fig_name=None):
 
 
 def plot_paris_predictions(paris_params, ds, navg, a0, times,
-                           save_fig_name=None, figsize=(12, 8),
+                           save_fig_name=None, figsize=(6, 4),
                            plot_individual=True, plot_grid=True):
     """
     Plot detailed Paris law predictions with various visualization options.
@@ -367,13 +367,19 @@ def plot_paris_predictions(paris_params, ds, navg, a0, times,
     ax.set_xlabel("Time (years)")
     ax.set_ylabel("Crack Length (mm)")
     # ax.set_title("Crack Growth Predictions")
-
+    # Set x-axis to start from zero
+    ax.set_xlim(left=0)
+    # Set y-axis to start from zero and limit to 160 mm
+    ax.set_ylim(bottom=0, top=160)
     # Add grid if requested
     if plot_grid:
-        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.grid(True, linestyle='--', alpha=0.4)
 
     # Add legend
-    ax.legend()
+    # Add legend in horizontal format at bottom left
+    ax.legend(loc='lower center', ncol=min(5, len(crack_lengths)),
+              frameon=True, framealpha=0.8, fontsize='small',
+              bbox_to_anchor=(0.5, 0), borderaxespad=1)
 
     # Save figure if requested
     if save_fig_name:
@@ -388,3 +394,137 @@ def plot_paris_predictions(paris_params, ds, navg, a0, times,
         plt.savefig(save_path, bbox_inches="tight")
 
     return fig, ax
+
+
+def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
+                               base_a0, times, c_variations=None,
+                               m_variations=None, ds_variations=None,
+                               figsize=(12, 4), cmap_name="Dark2",
+                               save_fig_name=None):
+    """
+    Plot the sensitivity of crack growth to variations in Paris law parameters.
+
+    Parameters
+    ----------
+    base_c : float
+        Base value of Paris law parameter C
+    base_m : float
+        Base value of Paris law exponent m
+    base_ds : float
+        Base value of stress range
+    base_navg : float
+        Base value of average cycles per time unit
+    base_a0 : float
+        Base value of initial crack length
+    times : array
+        Time points for prediction
+    c_variations : list, optional
+        List of C parameter values to test
+        (default is [0.5*base_c, base_c, 1.5*base_c])
+    m_variations : list, optional
+        List of m parameter values to test
+        (default is [0.8*base_m, base_m, 1.2*base_m])
+    ds_variations : list, optional
+        List of stress range values to test
+        (default is [0.7*base_ds, base_ds, 1.3*base_ds])
+    figsize : tuple, optional
+        Figure size
+    cmap_name : str, optional
+        Name of colormap to use
+    save_fig_name : str, optional
+        Filename to save the figure
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    axes : numpy.ndarray
+        Array of axes objects
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from src.predictive_models import CrackGrowthPredictor
+
+    # Set default variations if not provided
+    if c_variations is None:
+        c_variations = [base_c * 0.5, base_c, base_c * 1.5]
+    if m_variations is None:
+        m_variations = [base_m * 0.8, base_m, base_m * 1.2]
+    if ds_variations is None:
+        ds_variations = [base_ds * 0.7, base_ds, base_ds * 1.3]
+
+    # Create predictor
+    predictor = CrackGrowthPredictor()
+
+    # Plot parameter sensitivity
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    cmap = plt.get_cmap(cmap_name)
+
+    # Effect of C
+    for i, c in enumerate(c_variations):
+        cl = predictor.predict_crack_growth(
+            logc=np.log(c),
+            m=base_m,
+            ds=base_ds,
+            navg=base_navg,
+            a0=base_a0,
+            times=times
+        )
+        axes[0].plot(times, cl, color=cmap(i), label=f"$\\ln C = \
+                     {{{np.log(c):.2f}}}$")
+    axes[0].set_title("Effect of rate parameter $C$")
+    axes[0].set_xlabel("Time (years)")
+    axes[0].set_ylabel("Crack Length (mm)")
+    axes[0].grid(True, linestyle='--', alpha=0.4)
+    axes[0].legend()
+
+    # Effect of m
+    for i, m in enumerate(m_variations):
+        cl = predictor.predict_crack_growth(
+            logc=np.log(base_c),
+            m=m,
+            ds=base_ds,
+            navg=base_navg,
+            a0=base_a0,
+            times=times
+        )
+        axes[1].plot(times, cl, color=cmap(i), label=f"$m = {m:.2f}$")
+    axes[1].set_title("Effect of exponent parameter $m$")
+    axes[1].set_xlabel("Time (years)")
+    axes[1].set_xlim(left=0)
+    axes[1].set_ylim(bottom=0, top=160)
+    axes[1].grid(True, linestyle='--', alpha=0.4)
+    axes[1].legend()
+
+    # Effect of stress range
+    for i, ds in enumerate(ds_variations):
+        cl = predictor.predict_crack_growth(
+            logc=np.log(base_c),
+            m=base_m,
+            ds=ds,
+            navg=base_navg,
+            a0=base_a0,
+            times=times
+        )
+        axes[2].plot(times, cl, color=cmap(i), label=f"$\\Delta S = {ds:.2f}$")
+    axes[2].set_title("Effect of stress range $\\Delta S$")
+    axes[2].set_xlabel("Time (years)")
+    axes[2].grid(True, linestyle='--', alpha=0.4)
+    axes[2].legend()
+
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"""Directory {save_path.parent}
+                                    does not exist.""")
+        # Save the figure
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    return fig, axes
