@@ -1,7 +1,7 @@
 import numpy as np
 import jax.numpy as jnp
 from abc import ABC, abstractmethod
-from src.crack_growth_models import ParisErdogan
+from src.crack_growth_models import ParisErdogan, BaseCrackGrowthModel
 
 
 class ObservationModel(ABC):
@@ -181,30 +181,41 @@ class CompositeObservation(ObservationModel):
 
 class CrackGrowthPredictor:
     """
-    A utility class for predicting crack growth using the Paris-Erdogan law.
-    Can be used for visualization purposes and
-    as a component in Bayesian models.
+    A utility class for predicting crack growth using
+    different crack growth models.
+    Can be used for visualization purposes
+    and as a component in Bayesian models.
     """
 
-    def __init__(self, Y=1.12, observation_model=None):
+    def __init__(self, model_class=ParisErdogan,
+                 model_params=None, observation_model=None):
         """
-        Initialize the predictor.
+        Initialize the predictor with a specified crack growth model.
 
         Parameters
         ----------
-        Y : float, optional
-            The geometry factor Y for the stress intensity factor calculation.
-            Default is 1.12 for a standard geometry.
+        model_class : class, optional
+            Class to use for crack growth modeling, defaults to ParisErdogan.
+            Must be a subclass of BaseCrackGrowthModel.
+        model_params : dict, optional
+            Additional parameters to pass to the model constructor
+            (e.g., Y factor for SIF calculation)
         observation_model : ObservationModel, optional
             Model for transforming true crack lengths to observations
         """
-        self.Y = Y
+        # Validate that model_class is a subclass of BaseCrackGrowthModel
+        if not issubclass(model_class, BaseCrackGrowthModel):
+            raise TypeError("model_class must be a subclass \
+                            of BaseCrackGrowthModel")
+
+        self.model_class = model_class
+        self.model_params = model_params or {}
         self.observation_model = observation_model or IdentityObservation()
 
-    def predict_crack_growth(self, logc, m, ds, navg,
-                             a0, times, include_observations=True):
+    def predict_crack_growth(self, logc, m, ds,
+                             navg, a0, times, include_observations=True):
         """
-        Predict crack growth using the Paris-Erdogan model.
+        Predict crack growth using the specified crack growth model.
 
         Parameters
         ----------
@@ -213,7 +224,12 @@ class CrackGrowthPredictor:
         m : float or array
             Paris law exponent
         ds : float or array
-            Stress range
+            Stress range or stress range array (for variable stress models)
+            - For constant stress: single value or array of values
+            (one per sample)
+            - For variable stress: 1D array of stress values
+            (for single sample) or 2D array where each row
+            corresponds to a sample's stress history
         navg : float or array
             Average number of cycles per time unit
         a0 : float or array
@@ -236,115 +252,197 @@ class CrackGrowthPredictor:
             logc = np.array([logc])
         if not isinstance(m, (np.ndarray, jnp.ndarray)):
             m = np.array([m])
-        if not isinstance(ds, (np.ndarray, jnp.ndarray)):
-            ds = np.array([ds])
         if not isinstance(navg, (np.ndarray, jnp.ndarray)):
             navg = np.array([navg])
         if not isinstance(a0, (np.ndarray, jnp.ndarray)):
             a0 = np.array([a0])
+
+        # Handle ds differently depending on the model type
+        is_variable_stress = 'Variable' in self.model_class.__name__
+
+        # For variable stress models, ds could be a 1D array
+        # for single instance
+        # or a 2D array where each row is a sample's stress history
+        if is_variable_stress:
+            if not isinstance(ds, (np.ndarray, jnp.ndarray)):
+                # Convert scalar to 1D array
+                ds = np.array([ds])
+
+            # Determine if ds represents multiple instances
+            # or variable stress for a single instance
+            if ds.ndim == 1:
+                # Single instance with variable stress
+                # Check if length matches expected (times.shape[0]-1)
+                expected_length = len(times)-1 if times.ndim == 1 \
+                      else times.shape[1]-1
+                if len(ds) != expected_length:
+                    raise ValueError(f"For variable stress with single \
+                                     instance, ds length must be \
+                                      {expected_length} (times - 1)")
+
+                # Reshape to represent a single sample
+                batch_size = 1
+                ds = ds.reshape(1, -1)
+            else:
+                # Multiple instances, each with its own stress history
+                batch_size = ds.shape[0]
+        else:
+            # Standard constant stress model
+            if not isinstance(ds, (np.ndarray, jnp.ndarray)):
+                ds = np.array([ds])
+            batch_size = len(ds)
 
         # Handle time arrays
         if len(times.shape) > 1:
             # Multiple time series for multiple samples (n_samples, n_times)
             n_samples = times.shape[0]
             n_times = times.shape[1]
+
             # Ensure all parameter arrays have the same batch dimension
             if len(logc) != n_samples:
                 if len(logc) == 1:
                     logc = np.repeat(logc, n_samples)
                 else:
-                    raise ValueError("logc must have same first"
-                                     "dimension as times or be a scalar")
+                    raise ValueError("logc must have same first dimension as \
+                                     times or be a scalar")
             if len(m) != n_samples:
                 if len(m) == 1:
                     m = np.repeat(m, n_samples)
                 else:
-                    raise ValueError("m must have same first dimension as"
-                                     "times or be a scalar")
-            if len(ds) != n_samples:
-                if len(ds) == 1:
-                    ds = np.repeat(ds, n_samples)
-                else:
-                    raise ValueError("ds must have same first dimension "
-                                     "as times or be a scalar")
+                    raise ValueError("m must have same first dimension as \
+                                     times or be a scalar")
             if len(navg) != n_samples:
                 if len(navg) == 1:
                     navg = np.repeat(navg, n_samples)
                 else:
-                    raise ValueError("navg must have same first dimension"
-                                     " as times or be a scalar")
+                    raise ValueError("navg must have same first dimension as \
+                                     times or be a scalar")
             if len(a0) != n_samples:
                 if len(a0) == 1:
                     a0 = np.repeat(a0, n_samples)
                 else:
-                    raise ValueError("a0 must have same first dimension"
-                                     " as times or be a scalar")
+                    raise ValueError("a0 must have same first dimension as \
+                                     times or be a scalar")
+
+            # For constant stress, ensure ds matches n_samples
+            if not is_variable_stress and len(ds) != n_samples:
+                if len(ds) == 1:
+                    ds = np.repeat(ds, n_samples)
+                else:
+                    raise ValueError("ds must have same first dimension as \
+                                     times or be a scalar")
+
+            # For variable stress with multiple samples, ensure ds shape
+            # matches [n_samples, n_times-1]
+            if is_variable_stress:
+                if ds.shape[0] != n_samples:
+                    if ds.shape[0] == 1:
+                        # Repeat the single stress history for all samples
+                        ds = np.repeat(ds, n_samples, axis=0)
+                    else:
+                        raise ValueError("For variable stress, ds must have \
+                                         first dimension matching times or \
+                                         be a single stress history")
 
             # Initialize output array with proper shape
             crack_lengths = np.zeros_like(times)
 
             # Compute crack growth for each set of parameters
-            # with its own time series
+            #  with its own time series
             for i in range(n_samples):
-                paris = ParisErdogan(
-                    logc=logc[i],
-                    m=m[i],
-                    ds=ds[i],
-                    navg=navg[i],
-                    a0=a0[i],
-                    Y=self.Y,
-                    t=times[i]
-                )
+                # Create common parameter dictionary
+                model_params = {
+                    'logc': logc[i],
+                    'm': m[i],
+                    'navg': navg[i],
+                    'a0': a0[i],
+                    't': times[i],
+                    **self.model_params
+                }
+
+                # Add model-specific parameters
+                if is_variable_stress:
+                    model_params['ds_array'] = ds[i]
+                else:
+                    model_params['ds'] = ds[i]
+
+                # Create model with unified parameter interface
+                model = self.model_class(**model_params)
 
                 # Set initial crack length
                 crack_lengths[i, 0] = a0[i]
 
                 # Use discrete time formulation for crack growth prediction
                 for j in range(1, n_times):
-                    crack_lengths[i, j] = paris.state_eq(crack_lengths[i, j-1])
-
+                    # Always pass time information -
+                    # models that don't need it will ignore
+                    crack_lengths[i, j] = model.state_eq(
+                        crack_lengths[i, j-1], times[i, j-1]
+                        )
         else:
             # Single time series for all samples
-            # Determine batch size from parameter arrays
-            batch_size = max(len(logc), len(m), len(ds), len(navg), len(a0))
+            # Determine batch size based on parameter arrays
+            if is_variable_stress and ds.ndim > 1:
+                # Multiple samples, each with its own stress array
+                batch_size = ds.shape[0]
+            else:
+                # Either constant stress or a single variable stress array
+                batch_size = max(len(logc), len(m), len(ds)
+                                 if not is_variable_stress else 1,
+                                 len(navg), len(a0))
 
             # Broadcast all parameter arrays to the same length
             if len(logc) < batch_size:
-                logc = np.ones(batch_size) * logc[0] \
-                    if len(logc) == 1 else np.array(logc)
+                logc = np.ones(batch_size) * logc[0] if len(logc) == 1 \
+                    else np.array(logc)
             if len(m) < batch_size:
                 m = np.ones(batch_size) * m[0] if len(m) == 1 else np.array(m)
-            if len(ds) < batch_size:
-                ds = np.ones(batch_size) * ds[0] \
-                    if len(ds) == 1 else np.array(ds)
             if len(navg) < batch_size:
-                navg = np.ones(batch_size) * navg[0] \
-                    if len(navg) == 1 else np.array(navg)
+                navg = np.ones(batch_size) * navg[0] if len(navg) == 1 \
+                    else np.array(navg)
             if len(a0) < batch_size:
-                a0 = np.ones(batch_size) * a0[0] \
-                    if len(a0) == 1 else np.array(a0)
+                a0 = np.ones(batch_size) * a0[0] if len(a0) == 1 \
+                    else np.array(a0)
+
+            # For constant stress, broadcast ds if needed
+            if not is_variable_stress and len(ds) < batch_size:
+                ds = np.ones(batch_size) * ds[0] if len(ds) == 1 \
+                    else np.array(ds)
 
             # Initialize output array
             crack_lengths = np.zeros((batch_size, len(times)))
 
             # Compute crack growth for each set of parameters
             for i in range(batch_size):
-                paris = ParisErdogan(
-                    logc=logc[i],
-                    m=m[i],
-                    ds=ds[i],
-                    navg=navg[i],
-                    a0=a0[i],
-                    Y=self.Y,
-                    t=times
-                )
+                # Create common parameter dictionary
+                model_params = {
+                    'logc': logc[i],
+                    'm': m[i],
+                    'navg': navg[i],
+                    'a0': a0[i],
+                    't': times,
+                    **self.model_params
+                }
+
+                # Add model-specific parameters
+                if is_variable_stress:
+                    model_params['ds_array'] = ds[i] if ds.ndim > 1 \
+                        else ds.flatten()
+                else:
+                    model_params['ds'] = ds[i]
+
+                # Create model with unified parameter interface
+                model = self.model_class(**model_params)
 
                 # Set initial crack length
                 crack_lengths[i, 0] = a0[i]
 
                 # Use discrete time formulation for crack growth prediction
                 for j in range(1, len(times)):
-                    crack_lengths[i, j] = paris.state_eq(crack_lengths[i, j-1])
+                    # Always pass time information
+                    crack_lengths[i, j] = model.state_eq(
+                        crack_lengths[i, j-1], times[j-1]
+                        )
 
         # Apply observation model if requested
         if include_observations and self.observation_model is not None:
@@ -366,7 +464,7 @@ class CrackGrowthPredictor:
                             self.observation_model.observe(
                                 observed_lengths[i, j], times[i, j]
                                 if len(times.shape) > 1 else times[j]
-                        )
+                            )
 
             crack_lengths = observed_lengths
 
