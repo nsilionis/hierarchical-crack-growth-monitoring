@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from src.predictive_models import CrackGrowthPredictor
+from src.crack_growth_models import VariableStressParisErdogan
 
 plt.rcParams.update({"text.usetex": True,
                      "font.family": "sans-serif",
@@ -472,9 +473,9 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
         )
         axes[0].plot(times, cl, color=cmap(i), label=f"$\\ln C = \
                      {{{np.log(c):.2f}}}$")
-    axes[0].set_title("Effect of rate parameter $C$")
     axes[0].set_xlabel("Time (years)")
     axes[0].set_ylabel("Crack Length (mm)")
+    axes[0].set_title("Effect of rate parameter $C$")
     axes[0].grid(True, linestyle='--', alpha=0.4)
     axes[0].legend()
 
@@ -489,10 +490,10 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
             times=times
         )
         axes[1].plot(times, cl, color=cmap(i), label=f"$m = {m:.2f}$")
-    axes[1].set_title("Effect of exponent parameter $m$")
     axes[1].set_xlabel("Time (years)")
     axes[1].set_xlim(left=0)
     axes[1].set_ylim(bottom=0, top=160)
+    axes[1].set_title("Effect of exponent parameter $m$")
     axes[1].grid(True, linestyle='--', alpha=0.4)
     axes[1].legend()
 
@@ -507,8 +508,10 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
             times=times
         )
         axes[2].plot(times, cl, color=cmap(i), label=f"$\\Delta S = {ds:.2f}$")
-    axes[2].set_title("Effect of stress range $\\Delta S$")
     axes[2].set_xlabel("Time (years)")
+    axes[2].set_xlim(left=0)
+    axes[2].set_ylim(bottom=0, top=160)
+    axes[2].set_title("Effect of stress range $\\Delta S$")
     axes[2].grid(True, linestyle='--', alpha=0.4)
     axes[2].legend()
 
@@ -528,3 +531,386 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig, axes
+
+
+def plot_variable_stress_comparison(stress_periods=None, ds_array=None,
+                                    times=None,  logc=None, m=None,
+                                    navg=None, a0=None, cmap_name='Dark2',
+                                    figsize=(10, 6), save_fig_name=None):
+    """
+    Plot a comparison between constant and
+    variable stress Paris-Erdogan models.
+
+    Parameters
+    ----------
+    stress_periods : list of tuples, optional
+        List of (start_time, end_time, stress_level)
+        tuples defining stress periods.
+        Required if ds_array is not provided.
+    ds_array : array, optional
+        Array of stress values for each time interval.
+        Required if stress_periods is not provided.
+    times : array, optional
+        Time points for prediction. If None, creates a
+        default array from 0 to 3 years.
+    logc : float, optional
+        Natural logarithm of Paris law parameter C. Default is ln(5e-14).
+    m : float, optional
+        Paris law exponent. Default is 3.3.
+    navg : float, optional
+        Average cycles per time unit. Default is 2.8e6 (cycles/year).
+    a0 : float, optional
+        Initial crack length. Default is 40.0 mm.
+    cmap_name : str, optional
+        Name of colormap to use. Default is 'Dark2'.
+    figsize : tuple, optional
+        Figure size. Default is (10, 6).
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    axs : numpy.ndarray
+        Array of axes objects
+    """
+
+    # Set default values
+    if times is None:
+        times = np.linspace(0, 3.0, 50)
+
+    if logc is None:
+        logc = np.log(5e-14)
+
+    if m is None:
+        m = 3.3
+
+    if navg is None:
+        navg = 2.8e6
+
+    if a0 is None:
+        a0 = 40.0
+
+    # Generate ds_array from stress_periods if needed
+    if ds_array is None:
+        if stress_periods is None:
+            # Default stress periods if neither ds_array \
+            # nor stress_periods provided
+            stress_periods = [
+                (0.0, 0.6, 12.0),    # (start_time, end_time, stress_level)
+                (0.6, 1.2, 20.0),
+                (1.2, 1.8, 8.0),
+                (1.8, 2.4, 25.0),
+                (2.4, 3.0, 15.0),
+            ]
+
+        # Convert to array format required by VariableStressParisErdogan
+        ds_array = []
+        for i in range(len(times)-1):
+            t_mid = (times[i] + times[i+1])/2  # midpoint of interval
+            # Find which period contains this time
+            for start, end, stress in stress_periods:
+                if start <= t_mid < end:
+                    ds_array.append(stress)
+                    break
+
+        ds_array = np.array(ds_array)
+
+    # Create predictor with variable stress model
+    predictor_var = CrackGrowthPredictor(
+        model_class=VariableStressParisErdogan
+        )
+
+    # Predict crack growth with variable stress
+    crack_length_var = predictor_var.predict_crack_growth(
+        logc=logc,
+        m=m,
+        ds=ds_array,
+        navg=navg,
+        a0=a0,
+        times=times
+    )
+
+    # For comparison, create a constant stress model with average stress
+    avg_stress = np.mean(ds_array)
+    predictor_const = CrackGrowthPredictor()  # Default is ParisErdogan
+
+    # Predict crack growth with constant stress
+    crack_length_const = predictor_const.predict_crack_growth(
+        logc=logc,
+        m=m,
+        ds=avg_stress,
+        navg=navg,
+        a0=a0,
+        times=times
+    )
+
+    # Get colormap colors
+    cmap = plt.get_cmap(cmap_name)
+    colors = [cmap(i) for i in range(3)]
+
+    # Plot the results with proper fig, ax structure
+    fig, axs = plt.subplots(2, 1, figsize=figsize)
+    # Plot stress profile
+    axs[0].step(times[:-1], ds_array, where='post', color=colors[0],
+                linewidth=2)
+    axs[0].set_xlim(left=0, right=times[-1])
+    axs[0].set_ylim(bottom=0)
+    axs[0].xaxis.set_minor_locator(AutoMinorLocator())
+    axs[0].yaxis.set_minor_locator(AutoMinorLocator())
+    axs[0].tick_params(which='both', direction='in', top=True, right=True)
+    axs[0].set_xlabel('Time (years)')
+    axs[0].set_ylabel(r"Stress Range $\Delta S$ (MPa)")
+    # axs[0].set_title('Variable Stress Profile')
+    axs[0].grid(True, linestyle='--', alpha=0.7)
+
+    # Plot crack growth
+    axs[1].plot(times, crack_length_var, '-', color=colors[1], linewidth=2,
+                label='Variable Stress')
+    axs[1].plot(times, crack_length_const, '--', color=colors[2], linewidth=2,
+                label='Constant Avg. Stress')
+    axs[1].set_xlim(left=0, right=times[-1])
+    axs[1].set_ylim(bottom=25, top=160)
+    axs[1].xaxis.set_minor_locator(AutoMinorLocator())
+    axs[1].yaxis.set_minor_locator(AutoMinorLocator())
+    axs[1].set_xlabel('Time (years)')
+    axs[1].set_ylabel(r'Crack Length $\alpha$ (mm)')
+    # axs[1].set_title('Crack Growth Comparison')
+    axs[1].legend()
+    axs[1].grid(True, linestyle='--', alpha=0.7)
+
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"""Directory {save_path.parent}
+                                    does not exist.""")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    return fig, axs
+
+
+def plot_stress_pattern_comparison(
+        times=None, logc=None, m=None, navg=None, a0=None,
+        min_stress=5.0, max_stress=25.0, patterns=None,
+        cmap_name='Dark2', figsize=(10, 10), save_fig_name=None):
+    """
+    Plot the effect of different stress patterns on crack growth.
+
+    Parameters
+    ----------
+    times : array, optional
+        Time points for prediction. If None, creates a default array
+        from 0 to 3 years.
+    logc : float, optional
+        Natural logarithm of Paris law parameter C. Default is ln(5e-14).
+    m : float, optional
+        Paris law exponent. Default is 3.2.
+    navg : float, optional
+        Average cycles per time unit. Default is 2.8e6 (cycles/year).
+    a0 : float, optional
+        Initial crack length. Default is 40.0 mm.
+    min_stress : float, optional
+        Minimum stress value for pattern generation.
+    max_stress : float, optional
+        Maximum stress value for pattern generation.
+    patterns : list of str, optional
+        List of patterns to generate:
+        'increasing', 'decreasing', 'cyclical', 'random'.
+        Default is all four patterns.
+    cmap_name : str, optional
+        Name of colormap to use. Default is 'Dark2'.
+    figsize : tuple, optional
+        Figure size. Default is (10, 10).
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    axes : numpy.ndarray
+        Array of axes objects
+    """
+
+    # Set default values
+    if times is None:
+        times = np.linspace(0, 3.0, 50)
+
+    if logc is None:
+        logc = np.log(5e-14)
+
+    if m is None:
+        m = 3.2
+
+    if navg is None:
+        navg = 2.8e6
+
+    if a0 is None:
+        a0 = 40.0
+
+    if patterns is None:
+        patterns = ['increasing', 'decreasing', 'cyclical', 'random']
+
+    # Function to generate different stress patterns
+    def generate_stress_pattern(times, pattern_type,
+                                min_stress=5.0, max_stress=25.0):
+        """
+        Generate different stress patterns for demonstration.
+        """
+        n_intervals = len(times) - 1
+
+        if pattern_type == 'increasing':
+            # Linearly increasing stress
+            ds_array = np.linspace(min_stress, max_stress, n_intervals)
+
+        elif pattern_type == 'decreasing':
+            # Linearly decreasing stress
+            ds_array = np.linspace(max_stress, min_stress, n_intervals)
+
+        elif pattern_type == 'cyclical':
+            # Sinusoidal pattern
+            period = n_intervals / 3  # Complete 3 cycles
+            ds_array = ((max_stress + min_stress)/2 +
+                        (max_stress - min_stress)/2 *
+                        np.sin(2 * np.pi * np.arange(n_intervals) / period))
+
+        elif pattern_type == 'random':
+            # Random stress values
+            np.random.seed(42)  # For reproducibility
+            ds_array = np.random.uniform(min_stress, max_stress, n_intervals)
+
+        else:
+            raise ValueError(f"Unknown pattern type: {pattern_type}")
+
+        return ds_array
+
+    # Create predictor with variable stress model
+    predictor = CrackGrowthPredictor(model_class=VariableStressParisErdogan)
+
+    # Create figure
+    fig, axes = plt.subplots(len(patterns), 2, figsize=figsize)
+
+    # Get colormap colors
+    cmap = plt.get_cmap(cmap_name)
+    colors = [cmap(i % cmap.N) for i in range(len(patterns))]
+
+    # Track final crack lengths for comparison
+    crack_lengths = {}
+    avg_stresses = {}
+
+    # Create a list to store lines for figure legend
+    legend_lines = []
+    legend_labels = []
+
+    for i, pattern in enumerate(patterns):
+        # Generate stress pattern
+        ds_array = generate_stress_pattern(times, pattern,
+                                           min_stress, max_stress)
+        avg_stresses[pattern] = np.mean(ds_array)
+
+        # Predict crack growth
+        crack_length = predictor.predict_crack_growth(
+            logc=logc,
+            m=m,
+            ds=ds_array,
+            navg=navg,
+            a0=a0,
+            times=times
+        )
+
+        # Store for later analysis
+        crack_lengths[pattern] = crack_length
+
+        # Plot stress pattern
+        pattern_name = pattern.capitalize()
+        axes[i, 0].step(times[:-1], ds_array, where='post',
+                        color=colors[i], linewidth=2)
+        axes[i, 0].set_xlim(left=0, right=times[-1])
+        axes[i, 0].set_ylim(bottom=0, top=max_stress * 1.1)
+
+        # Add grid and minor ticks
+        axes[i, 0].grid(True, linestyle='--', alpha=0.5)
+        axes[i, 0].xaxis.set_minor_locator(AutoMinorLocator())
+        axes[i, 0].yaxis.set_minor_locator(AutoMinorLocator())
+        axes[i, 0].tick_params(which='both', direction='in',
+                               top=True, right=True)
+
+        # Add legend
+        # axes[i, 0].legend(loc='upper left', framealpha=0.9)
+
+        # Set labels
+        if i == len(patterns) - 1:
+            axes[i, 0].set_xlabel('Time (years)')
+        axes[i, 0].set_ylabel(r'Stress Range $\Delta S$ (MPa)')
+
+        # Plot resulting crack growth (without label in the axis)
+        line, = axes[i, 1].plot(times, crack_length,
+                                color=colors[i], linewidth=2)
+        axes[i, 1].set_xlim(left=0, right=times[-1])
+
+        # Store line and label for figure legend
+        legend_lines.append(line)
+        legend_labels.append(pattern_name)
+
+        # Add grid and minor ticks
+        axes[i, 1].grid(True, linestyle='--', alpha=0.5)
+        axes[i, 1].xaxis.set_minor_locator(AutoMinorLocator())
+        axes[i, 1].yaxis.set_minor_locator(AutoMinorLocator())
+        axes[i, 1].tick_params(which='both', direction='in',
+                               top=True, right=True)
+
+        # Set labels
+        if i == len(patterns) - 1:
+            axes[i, 1].set_xlabel('Time (years)')
+        axes[i, 1].set_ylabel(r'Crack Length $\alpha$ (mm)')
+
+    # Set y-axis limits for crack length plots to be the same
+    max_length = max([cl[-1] for cl in crack_lengths.values()])
+    for i in range(len(patterns)):
+        axes[i, 1].set_ylim(bottom=a0*0.9, top=max_length*1.1)
+
+    # Add a figure-level legend below the subplots
+    fig.legend(
+        legend_lines,
+        legend_labels,
+        loc='lower center',
+        ncol=len(patterns),
+        bbox_to_anchor=(0.5, 0.04),
+        frameon=True,
+        framealpha=0.9,
+        borderaxespad=1
+    )
+
+    # Adjust spacing between subplots and make room for the figure legend
+    plt.tight_layout(h_pad=2.5, w_pad=2.5, rect=[0, 0.08, 1, 1])
+
+    # Save figure if requested
+    if save_fig_name:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"Directory {save_path.parent}\
+                                     does not exist.")
+        # Save the figure
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    # Calculate statistics for return
+    stats = {
+        'final_lengths': {p: crack_lengths[p][-1] for p in patterns},
+        'avg_stresses': avg_stresses,
+        'length_stress_ratio': {p: crack_lengths[p][-1]/avg_stresses[p]
+                                for p in patterns}
+    }
+
+    return fig, axes, stats
