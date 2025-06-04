@@ -674,6 +674,7 @@ def plot_variable_stress_comparison(stress_periods=None, ds_array=None,
     axs[1].set_ylim(bottom=25, top=160)
     axs[1].xaxis.set_minor_locator(AutoMinorLocator())
     axs[1].yaxis.set_minor_locator(AutoMinorLocator())
+    axs[1].tick_params(which='both', direction='in', top=True, right=True)
     axs[1].set_xlabel('Time (years)')
     axs[1].set_ylabel(r'Crack Length $\alpha$ (mm)')
     # axs[1].set_title('Crack Growth Comparison')
