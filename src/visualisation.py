@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator
+from matplotlib.lines import Line2D
 import seaborn as sns
 import pandas as pd
 import numpy as np
@@ -915,3 +916,273 @@ def plot_stress_pattern_comparison(
     }
 
     return fig, axes, stats
+
+
+def plot_selected_trajectories(times, crack_lengths, labels=None,
+                               cmap_name='Paired', figsize=(8, 6),
+                               alpha=0.8, save_fig_name=None):
+    """
+    Plot selected crack growth trajectories.
+
+    Parameters
+    ----------
+    times : list of arrays or array
+        List of time arrays, one per trajectory, or a single 2D array
+    crack_lengths : list of arrays or array
+        List of crack length arrays, one per trajectory, or a single 2D array
+    labels : list, optional
+        Labels for the trajectories. If None, generates default labels
+    cmap_name : str, optional
+        Name of colormap to use. Default is 'Paired'.
+    figsize : tuple, optional
+        Figure size. Default is (8, 6).
+    alpha : float, optional
+        Transparency of the trajectory lines. Default is 0.8.
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes
+        The axes object
+    """
+    # Convert to list format if arrays are provided
+    if isinstance(times, np.ndarray) and times.ndim > 1:
+        times_list = [times[i, :] for i in range(times.shape[0])]
+    elif isinstance(times, list):
+        times_list = times
+    else:
+        times_list = [times]
+
+    if isinstance(crack_lengths, np.ndarray) and crack_lengths.ndim > 1:
+        crack_lengths_list = [crack_lengths[i, :]
+                              for i in range(crack_lengths.shape[0])]
+    elif isinstance(crack_lengths, list):
+        crack_lengths_list = crack_lengths
+    else:
+        crack_lengths_list = [crack_lengths]
+
+    # Create default labels if none provided
+    if labels is None:
+        labels = [f"Trajectory {i+1}" for i in range(len(times_list))]
+    elif len(labels) < len(times_list):
+        labels = labels + [f"Trajectory {i+1}"
+                           for i in range(len(labels), len(times_list))]
+
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Get colormap
+    cmap = plt.get_cmap(cmap_name)
+
+    # Plot each trajectory
+    for i, (t, cl, label) in enumerate(
+            zip(times_list, crack_lengths_list, labels)):
+        # Clean data by removing trailing zeros if any
+        non_zero_indices = np.where(cl > 0)[0]
+        if len(non_zero_indices) > 0:
+            last_idx = non_zero_indices[-1] + 1
+            t_clean = t[:last_idx]
+            cl_clean = cl[:last_idx]
+        else:
+            t_clean, cl_clean = t, cl
+
+        ax.plot(t_clean, cl_clean, color=cmap(i % cmap.N), linewidth=2,
+                alpha=alpha, label=label)
+
+    # Set labels and limits
+    ax.set_xlabel(r'Time [years]')
+    ax.set_ylabel(r'Crack length $\alpha$ [mm]')
+    ax.set_xlim(left=0)
+
+    # Add minor ticks
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    ax.tick_params(which='both', direction='in', top=True, right=True)
+
+    # Add grid
+    ax.grid(True, linestyle='--', alpha=0.5)
+
+    # Add legend
+    ax.legend(frameon=True, framealpha=0.9)
+
+    # Tight layout
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"Directory {save_path.parent} \
+                                     does not exist.")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    return fig, ax
+
+
+def plot_trajectories_with_observations(times, crack_lengths, obs_times,
+                                        obs_lengths, labels=None,
+                                        cmap_name='Paired', figsize=(8, 6),
+                                        traj_alpha=0.8, obs_alpha=0.8,
+                                        marker_size=30, save_fig_name=None):
+    """
+    Plot crack growth trajectories with overlaid observations.
+
+    Parameters
+    ----------
+    times : list of arrays or array
+        List of time arrays, one per trajectory
+    crack_lengths : list of arrays or array
+        List of crack length arrays, one per trajectory
+    obs_times : list of arrays or array
+        List of observation time arrays, one per trajectory
+    obs_lengths : list of arrays or array
+        List of observation crack length arrays, one per trajectory
+    labels : list, optional
+        Labels for the trajectories. If None, generates default labels
+    cmap_name : str, optional
+        Name of colormap to use. Default is 'Paired'.
+    figsize : tuple, optional
+        Figure size. Default is (8, 6).
+    traj_alpha : float, optional
+        Transparency of the trajectory lines. Default is 0.8.
+    obs_alpha : float, optional
+        Transparency of the observation markers. Default is 0.8.
+    marker_size : float, optional
+        Size of observation markers. Default is 30.
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes
+        The axes object
+    """
+    # Convert to list format if arrays are provided
+    if isinstance(times, np.ndarray) and times.ndim > 1:
+        times_list = [times[i, :] for i in range(times.shape[0])]
+    elif isinstance(times, list):
+        times_list = times
+    else:
+        times_list = [times]
+
+    if isinstance(crack_lengths, np.ndarray) and crack_lengths.ndim > 1:
+        crack_lengths_list = [crack_lengths[i, :]
+                              for i in range(crack_lengths.shape[0])]
+    elif isinstance(crack_lengths, list):
+        crack_lengths_list = crack_lengths
+    else:
+        crack_lengths_list = [crack_lengths]
+
+    if isinstance(obs_times, np.ndarray) and obs_times.ndim > 1:
+        obs_times_list = [obs_times[i, :] for i in range(obs_times.shape[0])]
+    elif isinstance(obs_times, list):
+        obs_times_list = obs_times
+    else:
+        obs_times_list = [obs_times]
+
+    if isinstance(obs_lengths, np.ndarray) and obs_lengths.ndim > 1:
+        obs_lengths_list = [obs_lengths[i, :]
+                            for i in range(obs_lengths.shape[0])]
+    elif isinstance(obs_lengths, list):
+        obs_lengths_list = obs_lengths
+    else:
+        obs_lengths_list = [obs_lengths]
+
+    # Create default labels if none provided
+    if labels is None:
+        labels = [f"Trajectory {i+1}" for i in range(len(times_list))]
+    elif len(labels) < len(times_list):
+        labels = labels + [f"Trajectory {i+1}"
+                           for i in range(len(labels), len(times_list))]
+
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Get colormap
+    cmap = plt.get_cmap(cmap_name)
+
+    # Plot each trajectory and its observations
+    for i in range(len(times_list)):
+        # Get color for this trajectory
+        color = cmap(i % cmap.N)
+
+        # Clean trajectory data by removing trailing zeros if any
+        t = times_list[i]
+        cl = crack_lengths_list[i]
+
+        non_zero_indices = np.where(cl > 0)[0]
+        if len(non_zero_indices) > 0:
+            last_idx = non_zero_indices[-1] + 1
+            t_clean = t[:last_idx]
+            cl_clean = cl[:last_idx]
+        else:
+            t_clean, cl_clean = t, cl
+
+        # Plot the full trajectory
+        traj_line, = ax.plot(t_clean, cl_clean, color=color, linewidth=2,
+                             alpha=traj_alpha, label=labels[i])
+
+        # Get corresponding observations
+        if i < len(obs_times_list) and i < len(obs_lengths_list):
+            obs_t = obs_times_list[i]
+            obs_cl = obs_lengths_list[i]
+
+            # Plot observations
+            ax.scatter(obs_t, obs_cl, color=color, s=marker_size,
+                       alpha=obs_alpha, marker='o', edgecolors='white',
+                       linewidths=0.5)
+
+    # Set labels and limits
+    ax.set_xlabel(r'Time [years]')
+    ax.set_ylabel(r'Crack length $\alpha$ [mm]')
+    ax.set_xlim(left=0)
+
+    # Add minor ticks
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    ax.tick_params(which='both', direction='in', top=True, right=True)
+
+    # Add grid
+    ax.grid(True, linestyle='--', alpha=0.5)
+
+    # Add legend
+    legend_elements = []
+    for i, label in enumerate(labels):
+        color = cmap(i % cmap.N)
+        # Line representing trajectory
+        legend_elements.append(
+            Line2D([0], [0], color=color, lw=2, label=label))
+
+    # Add a generic marker for observations
+    legend_elements.append(Line2D([0], [0], marker='o', color='gray',
+                                  label='Observations', markerfacecolor='gray',
+                                  markersize=8, markeredgecolor='white',
+                                  markeredgewidth=0.5, linestyle='none'))
+
+    ax.legend(handles=legend_elements, frameon=True, framealpha=0.9)
+
+    # Tight layout
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"Directory {save_path.parent} \
+                                     does not exist.")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    return fig, ax
