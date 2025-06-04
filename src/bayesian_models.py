@@ -262,7 +262,9 @@ class STLBayesianModel:
             - summary: Summary statistics of the posterior
         """
         # Create kernel for NUTS sampler with initialization strategy
-        kernel = NUTS(self.model, init_strategy=init_to_median)
+        kernel = NUTS(self.model,
+                      init_strategy=init_to_median,
+                      target_accept_prob=0.9)
 
         # Setup MCMC with the kernel
         self.mcmc = MCMC(
