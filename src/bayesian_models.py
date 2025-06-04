@@ -1,14 +1,14 @@
 import jax.numpy as jnp
 import jax.random as jr
-import jax.lax as lax
+# import jax.lax as lax
 import numpy as np
-import tqdm
+# import tqdm
 import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS, Predictive, init_to_median
-from numpyro.diagnostics import hpdi
+# from numpyro.diagnostics import hpdi
 import arviz as az
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional
 from src.crack_growth_models import ParisErdogan
 from src.predictive_models import ObservationModel, IdentityObservation
 
@@ -95,24 +95,26 @@ class STLBayesianModel:
             raise ValueError(f"Missing required data fields \
                              in crack_growth_data: {', '.join(missing_data)}")
 
-    def _crack_growth_step(self, crack_state, t_idx):
+    def _crack_growth_step(self, state_tuple, t_idx):
         """
         Single step of crack growth for use with jax.lax.scan
 
         Parameters
         ----------
-        crack_state : float
-            Current crack length
+        state_tuple : tuple
+            Tuple containing (crack_length, time)
         t_idx : int
-            Index in the time array
+            Index in the time array (used to get next time value)
 
         Returns
         -------
-        float
-            Updated crack length
+        tuple
+            Updated (crack_length, time)
         """
-        t = self.times[t_idx]
-        return self.growth_model.state_eq(crack_state, t)
+        crack_state, t = state_tuple
+        next_t = self.times[t_idx + 1]  # Get the next time point
+        next_crack = self.growth_model.state_eq(crack_state, t)
+        return (next_crack, next_t)
 
     def model(self, component_idx: int = 0, Y: float = 1.12,
               navg: Optional[float] = None) -> None:
@@ -165,9 +167,9 @@ class STLBayesianModel:
                     navg = self.crack_growth_data["avg_cycles"]
                     [component_idx][0]
                 else:
-                    raise ValueError("navg parameter not provided, \
-                                     no prior specified, \
-                                     and no avg_cycles in data")
+                    raise ValueError("navg parameter not provided, "
+                                     "no prior specified, "
+                                     "and no avg_cycles in data")
             else:
                 navg = numpyro.sample("navg", self.priors["navg"])
 
@@ -183,28 +185,31 @@ class STLBayesianModel:
         }
         self.growth_model = ParisErdogan(**model_params)
 
-        # Simulate crack growth using JAX's functional approach
-        # First time point is the initial crack length
-        crack_lengths = jnp.zeros_like(self.times)
+        # Create array to store crack lengths
+        n_times = len(self.times)
+
+        # Initialize the first crack length with a0
+        crack_lengths = jnp.zeros(n_times)
         crack_lengths = crack_lengths.at[0].set(a0)
 
-        # Use jax.lax.scan for the time evolution
-        # (more JAX-friendly than Python loop)
-        # We start from index 1 since we already know index 0
-        time_indices = jnp.arange(0, len(self.times)-1)
-        _, crack_lengths_rest = lax.scan(
-            lambda prev_crack, t_idx:
-            (self._crack_growth_step(prev_crack, t_idx),
-             self._crack_growth_step(prev_crack, t_idx)),
-            a0,  # Initial state is a0
-            time_indices  # Indices to iterate over
-        )
+        # Use simple JAX operations for each time step
+        for i in range(1, n_times):
+            prev_crack = crack_lengths[i-1]
+            dt = self.times[i] - self.times[i-1]
 
-        # Combine initial crack length with computed values
-        crack_lengths = jnp.concatenate([jnp.array([a0]), crack_lengths_rest])
+            # Calculate SIF
+            dk = Y * ds * jnp.sqrt(jnp.pi * prev_crack)
 
-        # Apply the observation model to the simulated crack lengths
-        # For an identity observation model, this just returns the input
+            # Apply Paris law to get crack growth increment
+            da_dn = jnp.exp(logc) * dk**m
+
+            # Calculate new crack length
+            new_crack = prev_crack + navg * dt * da_dn
+
+            # Store the new crack length
+            crack_lengths = crack_lengths.at[i].set(new_crack)
+
+        # Apply the observation model (if any)
         observed_crack_lengths = self.observation_model.observe(crack_lengths)
 
         # Observe the crack lengths with normal noise
@@ -213,4 +218,169 @@ class STLBayesianModel:
                        obs=observations)
 
         # Return deterministic quantities for later inspection
-        numpyro.deterministic("predicted_crack_lengths", crack_lengths)
+        numpyro.deterministic("predicted_crack_lengths", crack_lengths[1:])
+
+    def run_inference(self, component_idx: int = 0, Y: float = 1.12,
+                      navg: Optional[float] = None, num_warmup: int = 2000,
+                      num_samples: int = 4000, num_chains: int = 4,
+                      random_seed: int = 42, progress_bar: bool = True
+                      ) -> Dict:
+        """
+        Run MCMC inference using the NUTS sampler.
+
+        This method performs Bayesian inference for the crack growth model
+        parameters using the No-U-Turn Sampler (NUTS).
+
+        Parameters
+        ----------
+        component_idx : int, optional
+            Index of the component to model in the crack_growth_data.
+            Default is 0.
+        Y : float, optional
+            Geometry factor for stress intensity factor calculation.
+            Default is 1.12.
+        navg : float, optional
+            Average number of cycles per time unit.
+            If None, it will be sampled from the prior.
+        num_warmup : int, optional
+            Number of warmup steps for MCMC. Default is 1000.
+        num_samples : int, optional
+            Number of samples to draw after warmup. Default is 1000.
+        num_chains : int, optional
+            Number of MCMC chains to run. Default is 4.
+        random_seed : int, optional
+            Random seed for reproducibility. Default is 42.
+        progress_bar : bool, optional
+            Whether to show progress bar during sampling. Default is True.
+
+        Returns
+        -------
+        dict
+            Dictionary containing the inference results, including:
+            - mcmc: The MCMC object
+            - samples: Posterior samples
+            - summary: Summary statistics of the posterior
+        """
+        # Create kernel for NUTS sampler with initialization strategy
+        kernel = NUTS(self.model, init_strategy=init_to_median)
+
+        # Setup MCMC with the kernel
+        self.mcmc = MCMC(
+            kernel,
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            progress_bar=progress_bar,
+        )
+
+        # Run MCMC inference
+        rng_key = jr.PRNGKey(random_seed)
+        rng_key_, rng_key = jr.split(rng_key)
+        self.mcmc.run(
+            rng_key_,
+            component_idx=component_idx,
+            Y=Y,
+            navg=navg,
+        )
+
+        # Get samples from the posterior
+        self.posterior_samples = self.mcmc.get_samples(group_by_chain=True)
+
+        # Store results for later use by other methods
+        self._results = {
+            "mcmc": self.mcmc,
+            "samples": self.posterior_samples
+        }
+
+        # Generate summary statistics
+        summary = self.summarise_posterior(print_summary=False)
+        self._results["summary"] = summary
+
+        return {
+            "mcmc": self.mcmc,
+            "samples": self.posterior_samples,
+            "summary": summary
+        }
+
+    def summarise_posterior(self, print_summary=True):
+        """
+        Summarize the posterior distribution from MCMC sampling.
+
+        Parameters
+        ----------
+        print_summary : bool, optional
+            Whether to print the summary statistics, by default True
+
+        Returns
+        -------
+        dict
+            Summary statistics for each parameter
+        """
+        if not hasattr(self, '_results'):
+            raise ValueError("No inference results available. \
+                              Run 'run_inference' first.")
+
+        # Convert NumPyro samples to ArviZ InferenceData
+        inference_data = az.from_numpyro(self.mcmc)
+
+        # Generate summary using ArviZ
+        summary = az.summary(inference_data, round_to=4)
+
+        # Convert to dictionary for consistent return format
+        summary_dict = summary.to_dict()
+
+        # Print summary if requested
+        if print_summary:
+            print(summary)
+
+        return summary_dict
+
+    def generate_predictions(self, num_samples: int = 100,
+                             component_idx: int = 0,
+                             Y: float = 1.12,
+                             navg: Optional[float] = None,
+                             random_seed: int = None) -> Dict:
+        """
+        Generate posterior predictive samples.
+
+        Parameters
+        ----------
+        num_samples : int, optional
+            Number of posterior predictive samples to generate. Default is 100.
+        component_idx : int, optional
+            Index of the component to generate predictions for. Default is 0.
+        Y : float, optional
+            Geometry factor for stress intensity factor calculation.
+            Default is 1.12.
+        navg : float, optional
+            Average number of cycles per time unit.
+            If None, posterior samples of navg will be used if available.
+        random_seed : int, optional
+            Random seed for reproducibility.
+
+        Returns
+        -------
+        dict
+            Dictionary with posterior predictive samples
+        """
+        if self.posterior_samples is None:
+            raise ValueError("No posterior samples available.\
+                             Run inference first.")
+
+        # Set up random number generator
+        rng_key = jr.PRNGKey(random_seed if random_seed is not None else 0)
+
+        # Create predictive object with named arguments
+        predictive = Predictive(self.model,
+                                posterior_samples=self.posterior_samples,
+                                num_samples=num_samples)
+
+        # Generate predictions with specified parameters
+        predictions = predictive(
+            rng_key,
+            component_idx=component_idx,  # Use specified component
+            Y=Y,
+            navg=navg  # Use specified navg or posterior samples if None
+        )
+
+        return predictions
