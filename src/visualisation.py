@@ -5,6 +5,7 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import arviz as az
 from src.predictive_models import CrackGrowthPredictor
 from src.crack_growth_models import VariableStressParisErdogan
 
@@ -904,7 +905,6 @@ def plot_stress_pattern_comparison(
         if not save_path.parent.exists():
             raise FileNotFoundError(f"Directory {save_path.parent}\
                                      does not exist.")
-        # Save the figure
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     # Calculate statistics for return
@@ -1186,3 +1186,74 @@ def plot_trajectories_with_observations(times, crack_lengths, obs_times,
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig, ax
+
+
+def plot_posterior_trace(
+        samples, var_names=None, backend="matplotlib", save_fig_name=None):
+    """
+    Plots the trace and posterior distributions using ArviZ.
+
+    Parameters
+    ----------
+    samples : dict
+        Posterior samples, with shape (chains, draws) per variable.
+    var_names : list of str, optional
+        List of variables to plot. If None, all variables are plotted.
+    backend : str
+        Backend used for plotting ("matplotlib" or "bokeh").
+    save_fig_name : str, optional
+        If provided, saves the figure to a file with the given name.
+        Output directory is set internally.
+        Default is None.
+    """
+
+    idata = az.from_dict(posterior=samples)
+    axes = az.plot_trace(idata, var_names=var_names,
+                         backend=backend, compact=False)
+
+    plot_var_names = {
+        "logc": r"$\ln C$",
+        "m": r"$m$",
+        "ds": r"$\Delta S$",
+        "noise_std": r"$\sigma$"
+    }
+
+    # Access and modify the axes if they exist
+    if axes is not None and len(axes) > 0:
+        num_vars = axes.shape[0]
+
+        for i in range(num_vars):
+            # Remove default titles
+            if i < axes.shape[0] and 0 < axes.shape[1]:
+                axes[i, 0].set_title("")
+            if i < axes.shape[0] and 1 < axes.shape[1]:
+                axes[i, 1].set_title("")
+
+            # Set the labels for the KDE posteriors and trace plots
+            if i < axes.shape[0] and 0 < axes.shape[1]:
+                var_name = var_names[i] if var_names and i < len(var_names) \
+                    else f"Parameter {i+1}"
+                axes[i, 0].set_ylabel("Density")
+                axes[i, 0].set_xlabel(plot_var_names[var_name])
+
+            if i < axes.shape[0] and 1 < axes.shape[1]:
+                var_name = var_names[i] if var_names and i < len(var_names) \
+                    else f"Parameter {i+1}"
+                axes[i, 1].set_xlabel("MCMC iteration")
+                axes[i, 1].set_ylabel(plot_var_names[var_name])
+
+    plt.tight_layout()
+
+    if save_fig_name is not None:
+        main_dir = Path(__file__).resolve().parents[1]
+        output_dir = main_dir / "outputs"
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / save_fig_name
+        suffix = output_path.suffix.lower()
+        if suffix in [".png", ".jpg", ".jpeg"]:
+            plt.savefig(output_path, bbox_inches="tight", dpi=300)
+        else:
+            plt.savefig(output_path, bbox_inches="tight")
+
+    plt.show()
