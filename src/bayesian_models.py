@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS
+from numpyro.infer import MCMC, NUTS, Predictive
 import arviz as az
 from typing import Dict, Optional, Any
 from src.crack_growth_models import ParisErdogan
@@ -205,11 +205,9 @@ class STLBayesianModel:
 
         return inference_data
 
-    def generate_predictions(self,
-                             num_samples: int = 1000,
+    def generate_predictions(self, num_samples: int = 1000,
                              component_idx: int = 0,
-                             Y: float = 1.12,
-                             navg: Optional[float] = None,
+                             Y: float = 1.12, navg: Optional[float] = None,
                              random_seed: int = 42) -> Dict[str, jnp.ndarray]:
         """
         Generate posterior predictions for crack growth.
@@ -313,6 +311,138 @@ class STLBayesianModel:
             "predicted_crack_lengths": jnp.stack([p["predicted_crack_lengths"]
                                                   for p in all_predictions]),
             "obs": jnp.stack([p["obs"] for p in all_predictions])
+        }
+
+        return predictions
+
+    def generate_posterior_predictive(self,
+                                      num_samples: int = 1000,
+                                      component_idx: int = 0,
+                                      Y: float = 1.12,
+                                      navg: Optional[float] = None,
+                                      random_seed: int = 42
+                                      ) -> Dict[str, jnp.ndarray]:
+        """
+        Generate proper posterior predictive samples
+        using Numpyro's Predictive class.
+
+        This samples from the full posterior predictive distribution,
+        properly accounting for all sources of uncertainty
+        in the generative process.
+
+        Parameters
+        ----------
+        num_samples : int, optional
+            Number of posterior samples to use for prediction
+        component_idx : int, optional
+            Index of the component to predict
+        Y : float, optional
+            Geometry factor for SIF calculation
+        navg : float, optional
+            Average cycles per year. If None, uses default value 2.8e6
+        random_seed : int, optional
+            Random seed for reproducibility
+
+        Returns
+        -------
+        dict
+            Dictionary of predictions including samples
+            from the posterior predictive
+        """
+        if self.posterior_samples is None:
+            raise ValueError("No posterior samples available.\
+                              Please run inference first.")
+
+        # Set up the RNG key
+        rng_key = jr.PRNGKey(random_seed)
+
+        # Flatten chains for prediction
+        flat_samples = {}
+        for k, v in self.posterior_samples.items():
+            # Exclude 'predicted_crack_lengths' since
+            # it's a deterministic variable
+            if k != 'predicted_crack_lengths':
+                flat_samples[k] = v.reshape(-1)
+
+        # Select random subset of samples if requested
+        n_available = len(flat_samples["logc"])
+        if num_samples < n_available:
+            idx_key, pred_key = jr.split(rng_key)
+            indices = jr.choice(idx_key, n_available,
+                                (num_samples,), replace=False)
+            for k in flat_samples.keys():
+                flat_samples[k] = flat_samples[k][indices]
+        else:
+            pred_key = rng_key
+
+        # Define a predictive model that returns what we want to observe
+        def predictive_model(component_idx=0, Y=1.12, navg=None):
+            # Prior distributions - will be overridden by the posterior samples
+            logc = numpyro.sample("logc", self.priors["logc"])
+            m = numpyro.sample("m", self.priors["m"])
+            ds = numpyro.sample("ds", self.priors["ds"])
+            noise_std = numpyro.sample("noise_std", self.priors["noise_std"])
+
+            # Default navg if not provided
+            if navg is None:
+                navg = 2.8e6
+
+            # Extract data for this component
+            times = self.crack_growth_data["times"][component_idx]
+            data = self.crack_growth_data["noisy_crack_lengths"][component_idx]
+
+            # Initial crack length (first observation)
+            init_crack = data[0]
+
+            # Create Paris-Erdogan model instance
+            paris = ParisErdogan(
+                logc=logc,
+                m=m,
+                ds=ds,
+                navg=navg,
+                a0=init_crack,
+                Y=Y,
+                t=times
+            )
+
+            # Initialize array for predicted crack lengths
+            crack_lengths = jnp.zeros(len(times))
+            crack_lengths = crack_lengths.at[0].set(init_crack)
+
+            # Generate crack growth trajectory using the Paris-Erdogan model
+            for i in range(1, len(times)):
+                crack_lengths = crack_lengths.at[i].set(
+                    paris.state_eq(crack_lengths[i-1], times[i-1])
+                )
+
+            # Store deterministic crack growth for plotting
+            numpyro.deterministic("predicted_crack_lengths", crack_lengths)
+
+            # Sample from the posterior predictive distribution
+            # This properly incorporates observation noise
+            numpyro.sample("obs", dist.Normal(crack_lengths, noise_std))
+
+        # Use Numpyro's Predictive to generate posterior predictive samples
+        predictive = Predictive(predictive_model,
+                                posterior_samples=flat_samples,
+                                num_samples=num_samples,
+                                return_sites=["predicted_crack_lengths", "obs"]
+                                )
+
+        # Generate samples
+        predictive_samples = predictive(
+            pred_key,
+            component_idx=component_idx,
+            Y=Y,
+            navg=navg
+        )
+
+        # Format the results
+        predictions = {
+            "predicted_crack_lengths":
+            predictive_samples["predicted_crack_lengths"],
+            "obs":
+            predictive_samples["obs"]
         }
 
         return predictions
