@@ -211,7 +211,7 @@ def save_results_table(
     output_dir : str, optional
         Output directory, if None, uses project's 'outputs' directory
     format : str, optional
-        Output format ('csv', 'excel', 'latex', 'html', 'markdown')
+        Output format ('csv', 'excel', 'tex', 'html', 'markdown')
 
     Returns
     -------
@@ -249,7 +249,7 @@ def save_results_table(
         df.to_csv(filepath, index=False)
     elif format == 'excel':
         df.to_excel(filepath, index=False)
-    elif format == 'latex':
+    elif format == 'tex':
         with open(filepath, 'w') as f:
             f.write(df.to_latex(index=False))
     elif format == 'html':
