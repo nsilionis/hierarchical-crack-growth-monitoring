@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import arviz as az
+from scipy import stats
 from src.predictive_models import CrackGrowthPredictor
 from src.crack_growth_models import VariableStressParisErdogan
 
@@ -903,19 +904,11 @@ def plot_stress_pattern_comparison(
         save_path = dir_path / 'outputs' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
-            raise FileNotFoundError(f"Directory {save_path.parent}\
-                                     does not exist.")
+            raise FileNotFoundError(f"""Directory {save_path.parent}
+                                    does not exist.""")
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
-    # Calculate statistics for return
-    stats = {
-        'final_lengths': {p: crack_lengths[p][-1] for p in patterns},
-        'avg_stresses': avg_stresses,
-        'length_stress_ratio': {p: crack_lengths[p][-1]/avg_stresses[p]
-                                for p in patterns}
-    }
-
-    return fig, axes, stats
+    return fig, axes
 
 
 def plot_selected_trajectories(times, crack_lengths, labels=None,
@@ -1189,7 +1182,8 @@ def plot_trajectories_with_observations(times, crack_lengths, obs_times,
 
 
 def plot_posterior_trace(
-        samples, var_names=None, backend="matplotlib", save_fig_name=None):
+        samples, var_names=None, plot_var_names=None,
+        backend="matplotlib", save_fig_name=None):
     """
     Plots the trace and posterior distributions using ArviZ.
 
@@ -1199,6 +1193,10 @@ def plot_posterior_trace(
         Posterior samples, with shape (chains, draws) per variable.
     var_names : list of str, optional
         List of variables to plot. If None, all variables are plotted.
+    plot_var_names : dict or list, optional
+        Dictionary mapping variable names to display names,
+        or a list of display names in the same order as var_names.
+        If None, uses variable names as is.
     backend : str
         Backend used for plotting ("matplotlib" or "bokeh").
     save_fig_name : str, optional
@@ -1211,16 +1209,35 @@ def plot_posterior_trace(
     axes = az.plot_trace(idata, var_names=var_names,
                          backend=backend, compact=False)
 
-    plot_var_names = {
-        "logc": r"$\ln C$",
-        "m": r"$m$",
-        "ds": r"$\Delta S$",
-        "noise_std": r"$\sigma$"
-    }
-
     # Access and modify the axes if they exist
     if axes is not None and len(axes) > 0:
         num_vars = axes.shape[0]
+
+        # Create a mapping of variable names to display names
+        var_display_names = {}
+
+        # If var_names is not provided, get all variable names from samples
+        actual_var_names = var_names if var_names is not None \
+            else list(samples.keys())
+
+        # Process plot_var_names based on its type
+        if plot_var_names is None:
+            # Use the original variable names
+            var_display_names = {var: var for var in actual_var_names}
+        elif isinstance(plot_var_names, dict):
+            # Use the provided mappings, fall back to original names if missing
+            var_display_names = {var: plot_var_names.get(var, var)
+                                 for var in actual_var_names}
+        elif isinstance(plot_var_names, list) and \
+                len(plot_var_names) >= len(actual_var_names):
+            # Use list items as display names in the same order as var_names
+            var_display_names = {var: plot_var_names[i]
+                                 for i, var in enumerate(actual_var_names)}
+        else:
+            # Fallback to original names if plot_var_names has invalid format
+            var_display_names = {var: var for var in actual_var_names}
+            print("Warning: plot_var_names format not recognized.\
+                   Using original variable names.")
 
         for i in range(num_vars):
             # Remove default titles
@@ -1231,16 +1248,30 @@ def plot_posterior_trace(
 
             # Set the labels for the KDE posteriors and trace plots
             if i < axes.shape[0] and 0 < axes.shape[1]:
-                var_name = var_names[i] if var_names and i < len(var_names) \
+                var_name = actual_var_names[i] if i < len(actual_var_names) \
                     else f"Parameter {i+1}"
+                display_name = var_display_names.get(var_name, var_name)
+
+                axes[i, 0].xaxis.set_minor_locator(AutoMinorLocator())
+                axes[i, 0].yaxis.set_minor_locator(AutoMinorLocator())
+                axes[i, 0].tick_params(which='both', direction='in',
+                                       top=True, right=True)
+                axes[i, 0].tick_params(which='both', direction='in',
+                                       top=True, right=True)
                 axes[i, 0].set_ylabel("Density")
-                axes[i, 0].set_xlabel(plot_var_names[var_name])
+                axes[i, 0].set_xlabel(display_name)
 
             if i < axes.shape[0] and 1 < axes.shape[1]:
-                var_name = var_names[i] if var_names and i < len(var_names) \
+                var_name = actual_var_names[i] if i < len(actual_var_names) \
                     else f"Parameter {i+1}"
-                axes[i, 1].set_xlabel("MCMC iteration")
-                axes[i, 1].set_ylabel(plot_var_names[var_name])
+                display_name = var_display_names.get(var_name, var_name)
+
+                axes[i, 1].xaxis.set_minor_locator(AutoMinorLocator())
+                axes[i, 1].yaxis.set_minor_locator(AutoMinorLocator())
+                axes[i, 1].tick_params(which='both', direction='in',
+                                       top=True, right=True)
+                axes[i, 1].set_xlabel("MCMC Iteration")
+                axes[i, 1].set_ylabel(display_name)
 
     plt.tight_layout()
 
@@ -1257,3 +1288,324 @@ def plot_posterior_trace(
             plt.savefig(output_path, bbox_inches="tight")
 
     plt.show()
+
+
+def plot_prior_posterior_comparison(
+        posterior_samples, prior_dists, true_values=None,
+        var_names=None, plot_var_names=None, figsize=(12, 8),
+        n_cols=2, point_estimate='mode', save_fig_name=None,
+        use_first_chain_only=False, prior_range_extension=3.0):
+    """
+    Plot prior vs posterior distributions with true values and point estimates.
+
+    Parameters
+    ----------
+    posterior_samples : dict
+        Dictionary of posterior samples, with variable names as keys
+    prior_dists : dict
+        Dictionary of prior distributions, with variable names as keys
+    true_values : dict, optional
+        Dictionary of true parameter values, with variable names as keys
+    var_names : list, optional
+        List of variables to plot. If None, uses all keys in posterior_samples
+    plot_var_names : dict or list, optional
+        Dictionary mapping variable names to display names,
+        or a list of display names in the same order as var_names
+    figsize : tuple, optional
+        Figure size, default is (12, 8)
+    n_cols : int, optional
+        Number of columns in the subplot grid
+    point_estimate : str, optional
+        Point estimate to show on plot ('mode', 'median', 'mean')
+    save_fig_name : str, optional
+        If provided, saves the figure to a file with the given name
+    use_first_chain_only : bool, optional
+        If True, use only the first MCMC chain to reduce computation cost
+        and avoid potential issues with KDE estimation
+    prior_range_extension : float, optional
+        Factor to extend the range of the x-axis beyond the posterior's range
+        to better visualize prior distributions (default: 3.0)
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The created figure object
+    axes : numpy.ndarray
+        Array of axes objects for the subplots
+    """
+
+    # Determine which variables to plot
+    if var_names is None:
+        var_names = list(posterior_samples.keys())
+
+    # Create dictionary for display names
+    var_display_names = {}
+    if plot_var_names is None:
+        var_display_names = {var: var for var in var_names}
+    elif isinstance(plot_var_names, dict):
+        var_display_names = {var: plot_var_names.get(var, var)
+                             for var in var_names}
+    elif isinstance(plot_var_names, list) and \
+            len(plot_var_names) >= len(var_names):
+        var_display_names = {var: plot_var_names[i]
+                             for i, var in enumerate(var_names)}
+    else:
+        print("Warning: plot_var_names format not recognized. \
+              Using original variable names.")
+        var_display_names = {var: var for var in var_names}
+
+    # Determine grid layout
+    n_vars = len(var_names)
+    n_rows = int(np.ceil(n_vars / n_cols))
+
+    # Create figure and axes
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+    axes = axes.flatten()
+
+    # Plot each variable
+    for i, var in enumerate(var_names):
+        if i < len(axes):
+            ax = axes[i]
+
+            # Get posterior samples for this variable
+            post_samples = posterior_samples[var]
+
+            # Check if we need to flatten or select only first chain
+            if hasattr(post_samples, 'ndim') and post_samples.ndim > 1:
+                if use_first_chain_only:
+                    post_samples = post_samples[0]  # Use only first chain
+                else:
+                    post_samples = post_samples.flatten()  # Flatten all chains
+
+            # Get prior distribution for this variable
+            prior_dist = prior_dists[var]
+
+            # Determine range for plotting
+            x_min = np.percentile(post_samples, 0.1)
+            x_max = np.percentile(post_samples, 99.9)
+
+            # Get posterior range and extend it
+            post_range = x_max - x_min
+            x_min = x_min - prior_range_extension * post_range / 2
+            x_max = x_max + prior_range_extension * post_range / 2
+
+            # Handle special distributions with bounded support
+            dist_name = prior_dist.__class__.__name__
+
+            # For HalfNormal and other positive-only distributions
+            if dist_name in ['HalfNormal', 'Gamma', 'Exponential',
+                             'LogNormal', 'Weibull']:
+                x_min = max(0, x_min)  # Ensure we don't go below zero
+
+            # Very large range for heavy-tailed distributions
+            if dist_name in ['Cauchy', 'StudentT']:
+                x_min = x_min - prior_range_extension * post_range
+                x_max = x_max + prior_range_extension * post_range
+
+            # For bounded distributions, respect the bounds
+            if hasattr(prior_dist, 'support'):
+                try:
+                    if hasattr(prior_dist.support, 'lower_bound'):
+                        if prior_dist.support.lower_bound > -float('inf'):
+                            x_min = max(x_min, prior_dist.support.lower_bound)
+                    if hasattr(prior_dist.support, 'upper_bound'):
+                        if prior_dist.support.upper_bound < float('inf'):
+                            x_max = min(x_max, prior_dist.support.upper_bound)
+                except (AttributeError, ValueError):
+                    pass
+
+            # Create x range for plotting based on the adjusted range
+            x = np.linspace(x_min, x_max, 1000)
+
+            # Plot prior distribution
+            try:
+                # For numpyro distributions with log_prob method
+                prior_pdf = np.exp(prior_dist.log_prob(x))
+                ax.plot(x, prior_pdf, label='Prior', linestyle='dashed',
+                        color='coral', linewidth=1.5)
+            except Exception as e:
+                print(f"Warning: Could not plot prior for {var}: {e}")
+
+            # Plot posterior KDE
+            sns.kdeplot(data=post_samples, ax=ax, label='Posterior',
+                        color='royalblue', fill=True,
+                        alpha=0.2,
+                        linewidth=1.5)
+
+            # Calculate and plot posterior mode if requested
+            if point_estimate == 'mode':
+                kde = stats.gaussian_kde(post_samples)
+                mode_idx = np.argmax(kde(x))
+                mode_value = x[mode_idx]
+                ax.axvline(mode_value, color='dodgerblue', linestyle='-.',
+                           label='Posterior mode', linewidth=1.5)
+            elif point_estimate == 'median':
+                median_value = np.median(post_samples)
+                ax.axvline(median_value, color='dodgerblue', linestyle='-.',
+                           label='Posterior median', linewidth=1.5)
+            elif point_estimate == 'mean':
+                mean_value = np.mean(post_samples)
+                ax.axvline(mean_value, color='dodgerblue', linestyle='-.',
+                           label='Posterior mean', linewidth=1.5)
+
+            # Plot true value if provided
+            if true_values is not None and var in true_values:
+                ax.axvline(true_values[var], color='maroon', linestyle='--',
+                           label='True value', linewidth=2)
+            # Set x-axis limits for positive-only distributions
+            if dist_name in ['HalfNormal', 'Gamma', 'Exponential',
+                             'LogNormal', 'Weibull']:
+                ax.set_xlim(left=0)
+
+            # Set plot labels and customize appearance
+            ax.set_xlabel(var_display_names[var])
+            ax.set_ylabel('Density')
+            ax.xaxis.set_minor_locator(AutoMinorLocator())
+            ax.yaxis.set_minor_locator(AutoMinorLocator())
+            ax.tick_params(which='both', direction='in', top=True, right=True)
+            ax.grid(True, linestyle='--', alpha=0.3)
+            ax.legend(frameon=True, framealpha=0.9)
+
+    # Hide any unused axes
+    for i in range(n_vars, len(axes)):
+        axes[i].set_visible(False)
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name is not None:
+        main_dir = Path(__file__).resolve().parents[1]
+        output_dir = main_dir / "outputs"
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / save_fig_name
+        suffix = output_path.suffix.lower()
+        if suffix in [".png", ".jpg", ".jpeg"]:
+            plt.savefig(output_path, bbox_inches="tight", dpi=300)
+        else:
+            plt.savefig(output_path, bbox_inches="tight")
+
+    return fig, axes
+
+
+def plot_posterior_predictive_stl(posterior_predictions, true_times,
+                                  true_crack_lengths, observed_times,
+                                  observed_crack_lengths, max_samples=50,
+                                  figsize=(6.4, 4.8), save_fig_name=None):
+    """
+    Plot posterior predictive samples for crack growth
+    with observed data points.
+
+    Parameters
+    ----------
+    posterior_predictions : dict
+        Dictionary containing posterior predictive samples with keys:
+        - 'predicted_crack_lengths': Array of shape (n_samples, n_times)
+        - 'obs': Optional array of shape (n_samples, n_times)
+        with observation noise
+    true_times : array
+        Array of time points for the true trajectory
+    true_crack_lengths : array
+        Array of crack lengths for the true trajectory
+    observed_times : array
+        Array of time points for the observed data
+    observed_crack_lengths : array
+        Array of observed crack lengths (with measurement noise)
+    max_samples : int, optional
+        Maximum number of posterior samples to plot (for visual clarity)
+    figsize : tuple, optional
+        Figure size as (width, height) in inches
+    save_fig_name : str, optional
+        If provided, the figure will be saved with this name
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes
+        The axes object
+    stats : dict
+        Dictionary of computed statistics for further analysis
+    """
+    import numpy as np
+
+    # Extract predicted crack lengths and
+    # observations from posterior predictions
+    predicted_crack_lengths = posterior_predictions['predicted_crack_lengths']
+
+    # Create figure and axes
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Plot posterior predicted crack lengths (gray lines)
+    for i in range(min(max_samples, predicted_crack_lengths.shape[0])):
+        ax.plot(observed_times, predicted_crack_lengths[i], color='gray',
+                alpha=0.2, zorder=1)
+
+    # Plot posterior predictive mean
+    mean_prediction = np.mean(predicted_crack_lengths, axis=0)
+    ax.plot(observed_times, mean_prediction, color='darkblue', linewidth=2,
+            label='Posterior Mean', zorder=4)
+
+    # Plot the true trajectory
+    ax.plot(true_times, true_crack_lengths, 'k-', linewidth=2,
+            label='True trajectory', zorder=3)
+
+    # Plot the observations
+    ax.scatter(observed_times, observed_crack_lengths, color='red', s=60,
+               label='Observations', zorder=5, edgecolors='white',
+               linewidths=1)
+
+    # Add 95% credible interval
+    lower_ci = np.percentile(predicted_crack_lengths, 2.5, axis=0)
+    upper_ci = np.percentile(predicted_crack_lengths, 97.5, axis=0)
+    ax.fill_between(observed_times, lower_ci, upper_ci, color='blue',
+                    alpha=0.15, label='95% Credible Interval',
+                    zorder=2)
+
+    # Set labels and title
+    ax.set_xlabel('Time (years)', fontsize=12)
+    ax.set_ylabel('Crack length (mm)', fontsize=12)
+    ax.set_title('Posterior Predictive Check with ParisErdogan Model',
+                 fontsize=14)
+
+    # Set grid, limits, and legend
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=min(true_crack_lengths)*0.95)
+    ax.legend(fontsize=10)
+
+    # Show error metrics
+    rmse = np.sqrt(np.mean((mean_prediction - observed_crack_lengths)**2))
+    ax.text(0.05, 0.95, f"RMSE: {rmse:.2f} mm", transform=ax.transAxes,
+            bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
+
+    # Add minor ticks
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    ax.tick_params(which='both', direction='in', top=True, right=True)
+
+    # Save figure if filename provided
+    if save_fig_name is not None:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'outputs' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"Directory {save_path.parent} \
+                                    does not exist.")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    plt.tight_layout()
+
+    # Return computed statistics for additional analysis
+    stats = {
+        "rmse": rmse,
+        "mean_prediction": mean_prediction,
+        "lower_ci": lower_ci,
+        "upper_ci": upper_ci,
+        "ci_width": upper_ci - lower_ci
+    }
+
+    return fig, ax, stats
