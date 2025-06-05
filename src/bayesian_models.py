@@ -1,388 +1,318 @@
 import jax.numpy as jnp
 import jax.random as jr
-# import jax.lax as lax
-import numpy as np
-# import tqdm
 import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS, Predictive, init_to_median
-# from numpyro.diagnostics import hpdi
+from numpyro.infer import MCMC, NUTS
 import arviz as az
-from typing import Dict, List, Optional
+from typing import Dict, Optional, Any
 from src.crack_growth_models import ParisErdogan
-from src.predictive_models import ObservationModel, IdentityObservation
 
 
 class STLBayesianModel:
     """
-    This class implements a single-task Bayesian model using NumPyro.
-    The goal is to learn the parameters of a crack growth model
-    using crack growth data from a specific cracked component.
-    Hence, the model is referred to as a single-task model.
+    Single-task learner Bayesian model for Paris law parameters.
 
-    This model assumes constant load conditions throughout
-    the crack growth process. The model treats material parameters and
-    loading conditions as random variables which can be inferred
-    from the observed crack growth data.
+    This class encapsulates a Bayesian model for inferring Paris law parameters
+    from crack growth data. It assumes the data comes from a single component.
     """
 
-    # Required parameter names for the model to function properly
-    REQUIRED_PRIORS = ["logc", "m", "ds", "noise_std"]
-
-    def __init__(self, priors: Dict[str, dist.Distribution],
-                 crack_growth_data: Dict[str, List[np.ndarray]],
-                 observation_model: Optional[ObservationModel] = None):
+    def __init__(self,
+                 priors: Optional[Dict[str, dist.Distribution]] = None,
+                 crack_growth_data: Optional[Dict[str, Any]] = None):
         """
-        Initialize the Bayesian model with priors and
-        crack growth data.
+        Initialize the Bayesian model with priors and data.
 
         Parameters
         ----------
-        priors : Dict[str, dist.Distribution]
-            Dictionary containing the prior distributions for model parameters.
-            Must include the following keys:
-            - "logc": Prior for natural log of Paris law parameter C
-            - "m": Prior for Paris law exponent m
-            - "ds": Prior for stress range
-            - "noise_std": Prior for observation noise standard deviation
-
-            May optionally include:
-            - "navg": Prior for average cycles per time unit
-
-        crack_growth_data : Dict[str, List[np.ndarray]]
-            Dictionary containing the crack growth data for each component.
-            Typically outputs from
-            CrackObservationGenerator.create_observations().
-
-        observation_model : ObservationModel, optional
-            Model for transforming simulated crack lengths to observations.
-            If None, uses IdentityObservation which returns values unchanged.
-
-        Raises
-        ------
-        ValueError
-            If any required prior is missing from the priors dictionary
-        TypeError
-            If any value in the priors dictionary is not a NumPyro distribution
+        priors : dict, optional
+            Dictionary of prior distributions for parameters
+        crack_growth_data : dict, optional
+            Dictionary containing the crack growth data
         """
-        # Validate required priors are present
-        missing_priors = [prior for prior in self.REQUIRED_PRIORS
-                          if prior not in priors]
-        if missing_priors:
-            raise ValueError(f"Missing required priors: \
-                             {', '.join(missing_priors)}")
+        # Default priors if none provided
+        if priors is None:
+            self.priors = {
+                "logc": dist.Normal(-30.0, 2.0),
+                "m": dist.Normal(3.0, 0.5),
+                "ds": dist.Gamma(5.0, 0.3),
+                "noise_std": dist.HalfNormal(2.0)
+            }
+        else:
+            self.priors = priors
 
-        # Validate all priors are NumPyro distributions
-        invalid_priors = [k for k, v in priors.items()
-                          if not isinstance(v, dist.Distribution)]
-        if invalid_priors:
-            raise TypeError(f"The following priors are not NumPyro \
-                            distributions: {', '.join(invalid_priors)}")
-
-        self.priors = priors
+        # Store data
         self.crack_growth_data = crack_growth_data
+
+        # Initialize storage for posterior samples
         self.mcmc = None
         self.posterior_samples = None
 
-        # Set observation model (use identity if none provided)
-        self.observation_model = observation_model or IdentityObservation()
-
-        # Validate that crack_growth_data contains the necessary data
-        required_data = ["times", "crack_lengths", "initial_crack_length"]
-        missing_data = [field for field in required_data
-                        if field not in crack_growth_data]
-        if missing_data:
-            raise ValueError(f"Missing required data fields \
-                             in crack_growth_data: {', '.join(missing_data)}")
-
-    def _crack_growth_step(self, state_tuple, t_idx):
+    def model(self, component_idx=0, Y=1.12, navg=None):
         """
-        Single step of crack growth for use with jax.lax.scan
-
-        Parameters
-        ----------
-        state_tuple : tuple
-            Tuple containing (crack_length, time)
-        t_idx : int
-            Index in the time array (used to get next time value)
-
-        Returns
-        -------
-        tuple
-            Updated (crack_length, time)
-        """
-        crack_state, t = state_tuple
-        next_t = self.times[t_idx + 1]  # Get the next time point
-        next_crack = self.growth_model.state_eq(crack_state, t)
-        return (next_crack, next_t)
-
-    def model(self, component_idx: int = 0, Y: float = 1.12,
-              navg: Optional[float] = None) -> None:
-        """
-        Define the probabilistic model for crack growth
-        using data from crack_growth_data.
-
-        This function implements Paris law with NumPyro primitives, setting up:
-        1. Prior distributions for all model parameters
-        2. Forward simulation of crack growth based on Paris law
-        3. Likelihood model for observations given the simulated crack growth
+        Bayesian model for Paris law parameters.
 
         Parameters
         ----------
         component_idx : int, optional
-            Index of the component to model in the crack_growth_data.
-            Default is 0.
+            Index of the component to model
         Y : float, optional
-            Geometry factor for stress intensity factor calculation.
-            Default is 1.12.
+            Geometry factor for SIF calculation
         navg : float, optional
-            Average number of cycles per time unit.
-            If None, it will be sampled from the prior, which must be provided.
+            Average cycles per year. If None, uses a default value
 
-        Notes
-        -----
-        The model samples the following parameters from priors:
-        - logc: Natural logarithm of Paris law parameter C
-        - m: Paris law exponent parameter
-        - ds: Stress range
-        - noise_std: Standard deviation of the observation noise
-        - navg: Average number of cycles (if not provided as parameter)
+        Returns
+        -------
+        None
         """
-        # Get the data for the specified component
-        self.times = self.crack_growth_data["times"][component_idx]
-        observations = self.crack_growth_data["crack_lengths"][component_idx]
-        a0 = self.crack_growth_data["initial_crack_length"][component_idx]
-
-        # Sample model parameters from priors
+        # Prior distributions
         logc = numpyro.sample("logc", self.priors["logc"])
         m = numpyro.sample("m", self.priors["m"])
         ds = numpyro.sample("ds", self.priors["ds"])
         noise_std = numpyro.sample("noise_std", self.priors["noise_std"])
 
-        # If navg is not provided, sample it from the prior
+        # Default navg if not provided
         if navg is None:
-            if "navg" not in self.priors:
-                if "avg_cycles" in self.crack_growth_data:
-                    # Use the average cycles from the data if available
-                    navg = self.crack_growth_data["avg_cycles"]
-                    [component_idx][0]
-                else:
-                    raise ValueError("navg parameter not provided, "
-                                     "no prior specified, "
-                                     "and no avg_cycles in data")
-            else:
-                navg = numpyro.sample("navg", self.priors["navg"])
+            navg = 2.8e6
 
-        # Create the crack growth model instance with parameters
-        model_params = {
-            'logc': logc,
-            'm': m,
-            'ds': ds,
-            'navg': navg,
-            'a0': a0,
-            'Y': Y,
-            't': self.times
-        }
-        self.growth_model = ParisErdogan(**model_params)
+        # Extract data for this component
+        times = self.crack_growth_data["times"][component_idx]
+        data = self.crack_growth_data["noisy_crack_lengths"][component_idx]
 
-        # Create array to store crack lengths
-        n_times = len(self.times)
+        # Initial crack length (first observation)
+        init_crack = data[0]
 
-        # Initialize the first crack length with a0
-        crack_lengths = jnp.zeros(n_times)
-        crack_lengths = crack_lengths.at[0].set(a0)
+        # Create Paris-Erdogan model instance
+        paris = ParisErdogan(
+            logc=logc,
+            m=m,
+            ds=ds,
+            navg=navg,
+            a0=init_crack,
+            Y=Y,
+            t=times
+        )
 
-        # Use simple JAX operations for each time step
-        for i in range(1, n_times):
-            prev_crack = crack_lengths[i-1]
-            dt = self.times[i] - self.times[i-1]
+        # Initialize array for predicted crack lengths
+        crack_lengths = jnp.zeros(len(times))
+        crack_lengths = crack_lengths.at[0].set(init_crack)
 
-            # Calculate SIF
-            dk = Y * ds * jnp.sqrt(jnp.pi * prev_crack)
+        # Generate crack growth trajectory using the Paris-Erdogan model
+        for i in range(1, len(times)):
+            crack_lengths = crack_lengths.at[i].set(
+                paris.state_eq(crack_lengths[i-1], times[i-1])
+            )
 
-            # Apply Paris law to get crack growth increment
-            da_dn = jnp.exp(logc) * dk**m
+        # Likelihood for observations
+        numpyro.sample(
+            "obs",
+            dist.Normal(crack_lengths, noise_std),
+            obs=data
+        )
 
-            # Calculate new crack length
-            new_crack = prev_crack + navg * dt * da_dn
-
-            # Store the new crack length
-            crack_lengths = crack_lengths.at[i].set(new_crack)
-
-        # Apply the observation model (if any)
-        observed_crack_lengths = self.observation_model.observe(crack_lengths)
-
-        # Observe the crack lengths with normal noise
-        numpyro.sample("obs",
-                       dist.Normal(observed_crack_lengths, noise_std),
-                       obs=observations)
-
-        # Return deterministic quantities for later inspection
+        # Store predicted crack lengths for posterior predictive checks
         numpyro.deterministic("predicted_crack_lengths", crack_lengths[1:])
 
-    def run_inference(self, component_idx: int = 0, Y: float = 1.12,
-                      navg: Optional[float] = None, num_warmup: int = 2000,
-                      num_samples: int = 4000, num_chains: int = 4,
-                      random_seed: int = 42, progress_bar: bool = True
-                      ) -> Dict:
+    def run_inference(self,
+                      component_idx: int = 0,
+                      Y: float = 1.12,
+                      navg: Optional[float] = None,
+                      num_warmup: int = 1000,
+                      num_samples: int = 1000,
+                      num_chains: int = 4,
+                      progress_bar: bool = True) -> Dict:
         """
-        Run MCMC inference using the NUTS sampler.
-
-        This method performs Bayesian inference for the crack growth model
-        parameters using the No-U-Turn Sampler (NUTS).
+        Run MCMC inference for the model.
 
         Parameters
         ----------
         component_idx : int, optional
-            Index of the component to model in the crack_growth_data.
-            Default is 0.
+            Index of the component to model
         Y : float, optional
-            Geometry factor for stress intensity factor calculation.
-            Default is 1.12.
+            Geometry factor for SIF calculation
         navg : float, optional
-            Average number of cycles per time unit.
-            If None, it will be sampled from the prior.
+            Average cycles per year. If None, uses a default value
         num_warmup : int, optional
-            Number of warmup steps for MCMC. Default is 1000.
+            Number of warmup steps for MCMC
         num_samples : int, optional
-            Number of samples to draw after warmup. Default is 1000.
+            Number of samples to draw after warmup
         num_chains : int, optional
-            Number of MCMC chains to run. Default is 4.
-        random_seed : int, optional
-            Random seed for reproducibility. Default is 42.
+            Number of MCMC chains to run
         progress_bar : bool, optional
-            Whether to show progress bar during sampling. Default is True.
+            Whether to show a progress bar during sampling
 
         Returns
         -------
         dict
-            Dictionary containing the inference results, including:
-            - mcmc: The MCMC object
-            - samples: Posterior samples
-            - summary: Summary statistics of the posterior
+            Dictionary containing MCMC results and summary
         """
-        # Create kernel for NUTS sampler with initialization strategy
-        kernel = NUTS(self.model,
-                      init_strategy=init_to_median,
-                      target_accept_prob=0.9)
-
-        # Setup MCMC with the kernel
+        # Set up MCMC
+        nuts_kernel = NUTS(self.model,
+                           target_accept_prob=0.9)
         self.mcmc = MCMC(
-            kernel,
+            nuts_kernel,
             num_warmup=num_warmup,
             num_samples=num_samples,
             num_chains=num_chains,
-            progress_bar=progress_bar,
+            progress_bar=progress_bar
         )
 
-        # Run MCMC inference
-        rng_key = jr.PRNGKey(random_seed)
-        rng_key_, rng_key = jr.split(rng_key)
+        # Run inference
+        rng_key = jr.PRNGKey(0)
         self.mcmc.run(
-            rng_key_,
+            rng_key,
             component_idx=component_idx,
             Y=Y,
-            navg=navg,
+            navg=navg
         )
 
-        # Get samples from the posterior
+        # Extract and store results
         self.posterior_samples = self.mcmc.get_samples(group_by_chain=True)
 
-        # Store results for later use by other methods
-        self._results = {
-            "mcmc": self.mcmc,
-            "samples": self.posterior_samples
-        }
+        # Create summary statistics
+        summary = az.summary(az.from_numpyro(self.mcmc), round_to=3)
 
-        # Generate summary statistics
-        summary = self.summarise_posterior(print_summary=False)
-        self._results["summary"] = summary
-
+        # Return results and summary
         return {
             "mcmc": self.mcmc,
             "samples": self.posterior_samples,
             "summary": summary
         }
 
-    def summarise_posterior(self, print_summary=True):
+    def summarise_posterior(self, print_summary: bool = True
+                            ) -> az.InferenceData:
         """
-        Summarize the posterior distribution from MCMC sampling.
+        Create a summary of the posterior distribution.
 
         Parameters
         ----------
         print_summary : bool, optional
-            Whether to print the summary statistics, by default True
+            Whether to print the summary to stdout
 
         Returns
         -------
-        dict
-            Summary statistics for each parameter
+        arviz.InferenceData
+            ArviZ InferenceData object containing the posterior data
         """
-        if not hasattr(self, '_results'):
-            raise ValueError("No inference results available. \
-                              Run 'run_inference' first.")
+        if self.mcmc is None:
+            raise ValueError("No MCMC results available. \
+                             Please run inference first.")
 
-        # Convert NumPyro samples to ArviZ InferenceData
+        # Convert to ArviZ format
         inference_data = az.from_numpyro(self.mcmc)
 
-        # Generate summary using ArviZ
-        summary = az.summary(inference_data, round_to=4)
-
-        # Convert to dictionary for consistent return format
-        summary_dict = summary.to_dict()
-
-        # Print summary if requested
         if print_summary:
-            print(summary)
+            print(az.summary(inference_data, round_to=3))
 
-        return summary_dict
+        return inference_data
 
-    def generate_predictions(self, num_samples: int = 100,
+    def generate_predictions(self,
+                             num_samples: int = 1000,
                              component_idx: int = 0,
                              Y: float = 1.12,
                              navg: Optional[float] = None,
-                             random_seed: int = None) -> Dict:
+                             random_seed: int = 42) -> Dict[str, jnp.ndarray]:
         """
-        Generate posterior predictive samples.
+        Generate posterior predictions for crack growth.
 
         Parameters
         ----------
         num_samples : int, optional
-            Number of posterior predictive samples to generate. Default is 100.
+            Number of posterior samples to use for prediction
         component_idx : int, optional
-            Index of the component to generate predictions for. Default is 0.
+            Index of the component to predict
         Y : float, optional
-            Geometry factor for stress intensity factor calculation.
-            Default is 1.12.
+            Geometry factor for SIF calculation
         navg : float, optional
-            Average number of cycles per time unit.
-            If None, posterior samples of navg will be used if available.
+            Average cycles per year. If None, uses default value 2.8e6
         random_seed : int, optional
-            Random seed for reproducibility.
+            Random seed for reproducibility
 
         Returns
         -------
         dict
-            Dictionary with posterior predictive samples
+            Dictionary of predictions
         """
         if self.posterior_samples is None:
-            raise ValueError("No posterior samples available.\
-                             Run inference first.")
+            raise ValueError("No posterior samples available. \
+                             Please run inference first.")
 
-        # Set up random number generator
-        rng_key = jr.PRNGKey(random_seed if random_seed is not None else 0)
+        # Set up the RNG key
+        rng_key = jr.PRNGKey(random_seed)
 
-        # Create predictive object with named arguments
-        predictive = Predictive(self.model,
-                                posterior_samples=self.posterior_samples,
-                                num_samples=num_samples)
+        # Extract data for this component to get
+        # the initial crack length and times
+        times = self.crack_growth_data["times"][component_idx]
+        data = self.crack_growth_data["noisy_crack_lengths"][component_idx]
+        init_crack = data[0]
 
-        # Generate predictions with specified parameters
-        predictions = predictive(
-            rng_key,
-            component_idx=component_idx,  # Use specified component
-            Y=Y,
-            navg=navg  # Use specified navg or posterior samples if None
-        )
+        # Create a custom prediction function that
+        # manually implements the Paris model
+        # to avoid the broadcasting issues
+        def predict_fn(samples):
+            # Extract parameters from samples
+            logc = samples["logc"]
+            m = samples["m"]
+            ds = samples["ds"]
+            noise_std = samples["noise_std"]
+
+            if navg is None:
+                navg_value = 2.8e6
+            else:
+                navg_value = navg
+
+            # Initialize array for each sample's prediction
+            n_times = len(times)
+            crack_lengths = jnp.zeros(n_times)
+            crack_lengths = crack_lengths.at[0].set(init_crack)
+
+            # Create Paris-Erdogan model
+            paris = ParisErdogan(
+                logc=logc,
+                m=m,
+                ds=ds,
+                navg=navg_value,
+                a0=init_crack,
+                Y=Y,
+                t=times
+            )
+
+            # Generate crack growth trajectory
+            for i in range(1, n_times):
+                crack_lengths = crack_lengths.at[i].set(
+                    paris.state_eq(crack_lengths[i-1], times[i-1])
+                )
+
+            # Store full crack length array including initial point
+            return {
+                "predicted_crack_lengths": crack_lengths,
+                "obs": crack_lengths + noise_std * jr.normal(
+                    rng_key, crack_lengths.shape)
+            }
+
+        # Flatten chains for prediction
+        flat_samples = {}
+        for k, v in self.posterior_samples.items():
+            flat_samples[k] = v.reshape(-1)
+
+        # Select random subset of samples if requested
+        n_available = len(flat_samples["logc"])
+        if num_samples < n_available:
+            indices = jr.choice(rng_key, n_available, (num_samples,),
+                                replace=False)
+            for k in flat_samples.keys():
+                flat_samples[k] = flat_samples[k][indices]
+
+        # Run prediction for each posterior sample
+        all_predictions = []
+        for i in range(min(num_samples, n_available)):
+            sample = {k: v[i] for k, v in flat_samples.items()}
+            all_predictions.append(predict_fn(sample))
+
+        # Combine results
+        predictions = {
+            "predicted_crack_lengths": jnp.stack([p["predicted_crack_lengths"]
+                                                  for p in all_predictions]),
+            "obs": jnp.stack([p["obs"] for p in all_predictions])
+        }
 
         return predictions
