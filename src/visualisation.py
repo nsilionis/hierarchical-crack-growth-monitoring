@@ -79,7 +79,7 @@ def plot_scg_data(times, crack_lengths, save_fig_name=None):
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        fname = dir_path / 'outputs' / save_fig_name
+        fname = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not fname.parent.exists():
             raise FileNotFoundError("""Directory {fname.parent}
@@ -143,7 +143,7 @@ def paris_params_pair_plot(paris_c, paris_m, save_fig_name=None):
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        fname = dir_path / 'outputs' / save_fig_name
+        fname = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not fname.parent.exists():
             raise FileNotFoundError("""Directory {fname.parent}
@@ -191,7 +191,7 @@ def plot_initial_crack_length(initial_crack_length, save_fig_name=None):
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        fname = dir_path / 'outputs' / save_fig_name
+        fname = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not fname.parent.exists():
             raise FileNotFoundError("""Directory {fname.parent}
@@ -232,7 +232,7 @@ def plot_avg_cycles(avg_cycles, save_fig_name=None):
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        fname = dir_path / 'outputs' / save_fig_name
+        fname = dir_path / 'figure' / save_fig_name
         # Raise an error if the directory does not exist
         if not fname.parent.exists():
             raise FileNotFoundError("""Directory {fname.parent}
@@ -272,7 +272,7 @@ def plot_stress_ranges(stress_ranges, save_fig_name=None):
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        fname = dir_path / 'outputs' / save_fig_name
+        fname = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not fname.parent.exists():
             raise FileNotFoundError("""Directory {fname.parent}
@@ -390,7 +390,7 @@ def plot_paris_predictions(paris_params, ds, navg, a0, times,
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        save_path = dir_path / 'outputs' / save_fig_name
+        save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
             raise FileNotFoundError(f"""Directory {save_path.parent}
@@ -525,7 +525,7 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        save_path = dir_path / 'outputs' / save_fig_name
+        save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
             raise FileNotFoundError(f"""Directory {save_path.parent}
@@ -691,7 +691,7 @@ def plot_variable_stress_comparison(stress_periods=None, ds_array=None,
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        save_path = dir_path / 'outputs' / save_fig_name
+        save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
             raise FileNotFoundError(f"""Directory {save_path.parent}
@@ -901,7 +901,7 @@ def plot_stress_pattern_comparison(
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        save_path = dir_path / 'outputs' / save_fig_name
+        save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
             raise FileNotFoundError(f"""Directory {save_path.parent}
@@ -1009,7 +1009,7 @@ def plot_selected_trajectories(times, crack_lengths, labels=None,
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        save_path = dir_path / 'outputs' / save_fig_name
+        save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
             raise FileNotFoundError(f"Directory {save_path.parent} \
@@ -1171,7 +1171,7 @@ def plot_trajectories_with_observations(times, crack_lengths, obs_times,
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        save_path = dir_path / 'outputs' / save_fig_name
+        save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
             raise FileNotFoundError(f"Directory {save_path.parent} \
@@ -1277,7 +1277,7 @@ def plot_posterior_trace(
 
     if save_fig_name is not None:
         main_dir = Path(__file__).resolve().parents[1]
-        output_dir = main_dir / "outputs"
+        output_dir = main_dir / "figures"
         if not output_dir.exists():
             output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / save_fig_name
@@ -1463,7 +1463,7 @@ def plot_prior_posterior_comparison(
             ax.xaxis.set_minor_locator(AutoMinorLocator())
             ax.yaxis.set_minor_locator(AutoMinorLocator())
             ax.tick_params(which='both', direction='in', top=True, right=True)
-            ax.grid(True, linestyle='--', alpha=0.3)
+            # ax.grid(True, linestyle='--', alpha=0.3)
             ax.legend(frameon=True, framealpha=0.9)
 
     # Hide any unused axes
@@ -1476,7 +1476,7 @@ def plot_prior_posterior_comparison(
     # Save figure if requested
     if save_fig_name is not None:
         main_dir = Path(__file__).resolve().parents[1]
-        output_dir = main_dir / "outputs"
+        output_dir = main_dir / "figures"
         if not output_dir.exists():
             output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / save_fig_name
@@ -1492,7 +1492,8 @@ def plot_prior_posterior_comparison(
 def plot_posterior_predictive_stl(posterior_predictions, true_times,
                                   true_crack_lengths, observed_times,
                                   observed_crack_lengths, max_samples=50,
-                                  figsize=(6.4, 4.8), save_fig_name=None):
+                                  figsize=(6.4, 4.8), save_fig_name=None,
+                                  plot_type="predictions"):
     """
     Plot posterior predictive samples for crack growth
     with observed data points.
@@ -1518,6 +1519,10 @@ def plot_posterior_predictive_stl(posterior_predictions, true_times,
         Figure size as (width, height) in inches
     save_fig_name : str, optional
         If provided, the figure will be saved with this name
+    plot_type : str, optional
+        What to plot from posterior predictive samples:
+        - "predictions": Plot the predicted crack lengths (default)
+        - "observations": Plot the posterior predictive observations
 
     Returns
     -------
@@ -1530,67 +1535,83 @@ def plot_posterior_predictive_stl(posterior_predictions, true_times,
     """
     import numpy as np
 
-    # Extract predicted crack lengths and
-    # observations from posterior predictions
-    predicted_crack_lengths = posterior_predictions['predicted_crack_lengths']
-
     # Create figure and axes
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Plot posterior predicted crack lengths (gray lines)
-    for i in range(min(max_samples, predicted_crack_lengths.shape[0])):
-        ax.plot(observed_times, predicted_crack_lengths[i], color='gray',
-                alpha=0.2, zorder=1)
+    # Extract data based on plot_type
+    if plot_type == "observations" and "obs" in posterior_predictions:
+        # Plot posterior predicted observations
+        samples = posterior_predictions['obs']
+        samples_mean = np.mean(samples, axis=0)
+        lower_ci = np.percentile(samples, 2.5, axis=0)
+        upper_ci = np.percentile(samples, 97.5, axis=0)
 
-    # Plot posterior predictive mean
-    mean_prediction = np.mean(predicted_crack_lengths, axis=0)
-    ax.plot(observed_times, mean_prediction, color='darkblue', linewidth=2,
-            label='Posterior Mean', zorder=4)
+        # Plot individual observation trajectories
+        for i in range(min(max_samples, samples.shape[0])):
+            ax.plot(observed_times, samples[i], color='thistle',
+                    alpha=0.3, zorder=1)
+
+        # Add credible interval for observations
+        ax.fill_between(observed_times, lower_ci, upper_ci,
+                        color='darkslateblue', alpha=0.15,
+                        label=r'95\% Credible Interval', zorder=2)
+
+        # Plot mean of observations
+        ax.plot(observed_times, samples_mean, color='mediumslateblue',
+                linewidth=1.5, linestyle="dashdot",
+                label='Posterior Mean', zorder=4)
+    else:
+        # Default to plotting predicted crack lengths
+        samples = posterior_predictions['predicted_crack_lengths']
+        samples_mean = np.mean(samples, axis=0)
+        lower_ci = np.percentile(samples, 2.5, axis=0)
+        upper_ci = np.percentile(samples, 97.5, axis=0)
+
+        # Plot individual trajectories
+        for i in range(min(max_samples, samples.shape[0])):
+            ax.plot(observed_times, samples[i], color='lavender',
+                    alpha=0.4, zorder=1)
+
+        # Add credible interval
+        ax.fill_between(observed_times, lower_ci, upper_ci, color='royalblue',
+                        alpha=0.15, label=r'95\% Credible Interval', zorder=2)
+
+        # Plot posterior predictive mean
+        ax.plot(observed_times, samples_mean, color='royalblue', linewidth=1.5,
+                linestyle="dashdot", label='Posterior Mean', zorder=4)
 
     # Plot the true trajectory
-    ax.plot(true_times, true_crack_lengths, 'k-', linewidth=2,
+    ax.plot(true_times, true_crack_lengths, 'darkorange', linewidth=1.5,
             label='True trajectory', zorder=3)
 
     # Plot the observations
-    ax.scatter(observed_times, observed_crack_lengths, color='red', s=60,
+    ax.scatter(observed_times, observed_crack_lengths, color='coral', s=40,
                label='Observations', zorder=5, edgecolors='white',
                linewidths=1)
-
-    # Add 95% credible interval
-    lower_ci = np.percentile(predicted_crack_lengths, 2.5, axis=0)
-    upper_ci = np.percentile(predicted_crack_lengths, 97.5, axis=0)
-    ax.fill_between(observed_times, lower_ci, upper_ci, color='blue',
-                    alpha=0.15, label='95% Credible Interval',
-                    zorder=2)
 
     # Set labels and title
     ax.set_xlabel('Time (years)', fontsize=12)
     ax.set_ylabel('Crack length (mm)', fontsize=12)
-    ax.set_title('Posterior Predictive Check with ParisErdogan Model',
-                 fontsize=14)
 
     # Set grid, limits, and legend
-    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.grid(True, linestyle='--', alpha=0.2)
     ax.set_xlim(left=0)
     ax.set_ylim(bottom=min(true_crack_lengths)*0.95)
-    ax.legend(fontsize=10)
-
-    # Show error metrics
-    rmse = np.sqrt(np.mean((mean_prediction - observed_crack_lengths)**2))
-    ax.text(0.05, 0.95, f"RMSE: {rmse:.2f} mm", transform=ax.transAxes,
-            bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
+    ax.legend(fontsize=10, frameon=True, framealpha=0.2)
 
     # Add minor ticks
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    ax.tick_params(which='both', direction='in', top=True, right=True)
+
+    # Calculate RMSE
+    rmse = np.sqrt(np.mean((samples_mean - observed_crack_lengths)**2))
 
     # Save figure if filename provided
     if save_fig_name is not None:
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        save_path = dir_path / 'outputs' / save_fig_name
+        save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
             raise FileNotFoundError(f"Directory {save_path.parent} \
@@ -1602,7 +1623,7 @@ def plot_posterior_predictive_stl(posterior_predictions, true_times,
     # Return computed statistics for additional analysis
     stats = {
         "rmse": rmse,
-        "mean_prediction": mean_prediction,
+        "mean_prediction": samples_mean,
         "lower_ci": lower_ci,
         "upper_ci": upper_ci,
         "ci_width": upper_ci - lower_ci
