@@ -20,14 +20,14 @@ class SIFCalculator(ABC):
         Parameters
         ----------
         a : float or array
-            Crack length
+            Crack length, can be batched
         ds : float or array
-            Stress range
+            Stress range, can be batched
 
         Returns
         -------
         float or array
-            Stress Intensity Factor
+            Stress Intensity Factor with shape matching inputs
         """
         pass
 
@@ -55,15 +55,16 @@ class SimpleGeometrySIF(SIFCalculator):
         Parameters
         ----------
         a : float or array
-            Crack length
+            Crack length, can be batched
         ds : float or array
-            Stress range
+            Stress range, can be batched
 
         Returns
         -------
         float or array
-            Stress Intensity Factor
+            Stress Intensity Factor with shape compatible with inputs
         """
+        # Enable broadcasting between a and ds for vectorized operations
         return self.Y * ds * jnp.sqrt(jnp.pi * a)
 
 
@@ -171,7 +172,7 @@ class BaseCrackGrowthModel(ABC):
         Parameters
         ----------
         a : float or array
-            Crack length
+            Crack length, can be batched
         ds : float or array, optional
             Stress range, uses the model's default if not provided
 
@@ -190,14 +191,14 @@ class BaseCrackGrowthModel(ABC):
         Parameters
         ----------
         x : float or array
-            Current crack length
+            Current crack length, can be batched
         t : float, optional
             Current time
 
         Returns
         -------
         float or array
-            Updated crack length
+            Updated crack length, preserving input batch shape
         """
         pass
 
@@ -234,17 +235,19 @@ class ParisErdogan(BaseCrackGrowthModel):
         Parameters
         ----------
         a : float or array
-            Crack length
+            Crack length, can be batched
         ds : float or array, optional
             Stress range, uses the model's default if not provided
 
         Returns
         -------
         float or array
-            Stress intensity factor range
+            Stress intensity factor range with same shape as input
         """
         # Use provided stress range or default
         stress_range = self.ds if ds is None else ds
+
+        # Support broadcasting between stress_range and crack length
         return self.sif_calculator.calculate(a, stress_range)
 
     def ParisCont(self, dn, a):
@@ -308,19 +311,25 @@ class ParisErdogan(BaseCrackGrowthModel):
         Parameters
         ----------
         x : float or array
-            Current crack length
+            Current crack length, can be batched with shape (batch_size,)
         t : float, optional
             Current time (not used for constant stress)
 
         Returns
         -------
         float or array
-            Updated crack length after one time step
+            Updated crack length after one time step, preserving input shape
         """
-        # Vectorize this operation for efficiency when x is an array
-        x = x + self.navg * self.dt * (jnp.exp(self.logc) *
-                                       (self.SIF(x))**self.m)
-        return x
+        # Calculate SIF for the current crack length
+        dk = self.SIF(x)
+
+        # Calculate crack growth rate using Paris law
+        da_dn = jnp.exp(self.logc) * dk**self.m
+
+        # Update crack length, preserving batch dimensions
+        x_new = x + self.navg * self.dt * da_dn
+
+        return x_new
 
 
 class VariableStressParisErdogan(BaseCrackGrowthModel):
@@ -425,19 +434,25 @@ class VariableStressParisErdogan(BaseCrackGrowthModel):
         Parameters
         ----------
         x : float or array
-            Current crack length
+            Current crack length, can be batched
         t : float
             Current time (used to determine stress range)
 
         Returns
         -------
         float or array
-            Updated crack length after one time step
+            Updated crack length after one time step, preserving input shape
         """
         # Get stress range for the current time interval
         current_ds = self.get_stress_range(t)
 
-        # Calculate SIF and crack growth increment
-        x = x + self.navg * self.dt * (jnp.exp(self.logc) *
-                                       (self.SIF(x, ds=current_ds))**self.m)
-        return x
+        # Calculate SIF for the current crack length and stress
+        dk = self.SIF(x, ds=current_ds)
+
+        # Calculate crack growth rate using Paris law
+        da_dn = jnp.exp(self.logc) * dk**self.m
+
+        # Update crack length, preserving batch dimensions
+        x_new = x + self.navg * self.dt * da_dn
+
+        return x_new
