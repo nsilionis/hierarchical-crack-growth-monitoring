@@ -232,7 +232,7 @@ def plot_avg_cycles(avg_cycles, save_fig_name=None):
         # Get the root directory of the project
         dir_path = Path(__file__).resolve().parents[1]
         # Create the path to save the figure
-        fname = dir_path / 'figure' / save_fig_name
+        fname = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not fname.parent.exists():
             raise FileNotFoundError("""Directory {fname.parent}
