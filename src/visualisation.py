@@ -4,6 +4,7 @@ from matplotlib.lines import Line2D
 import seaborn as sns
 import pandas as pd
 import numpy as np
+import jax
 from pathlib import Path
 import arviz as az
 from scipy import stats
@@ -815,7 +816,7 @@ def plot_stress_pattern_comparison(
 
     # Get colormap colors
     cmap = plt.get_cmap(cmap_name)
-    colors = [cmap(i % cmap.N) for i in range(len(patterns))]
+    colors = [cmap(i) for i in range(len(patterns))]
 
     # Track final crack lengths for comparison
     crack_lengths = {}
@@ -1194,7 +1195,8 @@ def plot_trajectories_with_observations(times, crack_lengths, obs_times,
 
 def plot_posterior_trace(
         samples, var_names=None, plot_var_names=None,
-        backend="matplotlib", save_fig_name=None):
+        backend="matplotlib", save_fig_name=None,
+        compact=False):
     """
     Plots the trace and posterior distributions using ArviZ.
 
@@ -1214,11 +1216,13 @@ def plot_posterior_trace(
         If provided, saves the figure to a file with the given name.
         Output directory is set internally.
         Default is None.
+    compact : bool, optional
+        Set to True for hierarchical models. Default is False.
     """
 
     idata = az.from_dict(posterior=samples)
     axes = az.plot_trace(idata, var_names=var_names,
-                         backend=backend, compact=False)
+                         backend=backend, compact=True)
 
     # Access and modify the axes if they exist
     if axes is not None and len(axes) > 0:
@@ -1301,50 +1305,111 @@ def plot_posterior_trace(
     plt.show()
 
 
-def plot_prior_posterior_comparison(
-        posterior_samples, prior_dists, true_values=None,
-        var_names=None, plot_var_names=None, figsize=(12, 8),
-        n_cols=2, point_estimate='mode', save_fig_name=None,
-        use_first_chain_only=False, prior_range_extension=3.0):
+def _estimate_prior_range(prior_dist):
     """
-    Plot prior vs posterior distributions with true values and point estimates.
+    Estimate a reasonable plotting range for a prior distribution.
+
+    Parameters
+    ----------
+    prior_dist : numpyro.distributions object
+        The prior distribution
+
+    Returns
+    -------
+    tuple : (min_val, max_val)
+        Estimated reasonable range for plotting
+    """
+    import numpyro.distributions as dist
+
+    # Handle specific distribution types
+    if isinstance(prior_dist, dist.Normal):
+        loc = prior_dist.loc
+        scale = prior_dist.scale
+        return float(loc - 4 * scale), float(loc + 4 * scale)
+
+    elif isinstance(prior_dist, dist.HalfNormal):
+        scale = prior_dist.scale
+        return 0.0, float(4 * scale)  # HalfNormal support is [0, inf)
+
+    elif isinstance(prior_dist, dist.Gamma):
+        concentration = prior_dist.concentration
+        rate = prior_dist.rate
+        mean = concentration / rate
+        std = np.sqrt(concentration) / rate
+        return 0.0, float(mean + 4 * std)  # Gamma support is [0, inf)
+
+    elif isinstance(prior_dist, dist.Weibull):
+        concentration = prior_dist.concentration
+        scale = prior_dist.scale
+        # Weibull mean ≈ scale * Γ(1 + 1/concentration)
+        mean_approx = scale * 1.0  # Rough approximation
+        return 0.0, float(mean_approx * 3)  # Weibull support is [0, inf)
+
+    elif isinstance(prior_dist, dist.Uniform):
+        low = prior_dist.low
+        high = prior_dist.high
+        return float(low), float(high)
+
+    else:
+        # Fallback: try to sample from the distribution to estimate range
+        try:
+            key = jax.random.PRNGKey(42)
+            samples = prior_dist.sample(key, (1000,))
+            return float(np.percentile(samples, 0.1)), float(
+                np.percentile(samples, 99.9))
+        except Exception:
+            # Last resort: return a default range
+            return -10.0, 10.0
+
+
+def plot_prior_posterior_comparison(
+    posterior_samples,
+    prior_dists,
+    true_values=None,
+    var_names=None,
+    plot_var_names=None,
+    figsize=(12, 8),
+    n_cols=3,
+    point_estimate='mean',
+    save_fig_name=None,
+    use_first_chain_only=False,
+    prior_range_extension=2.0
+):
+    """
+    Plot comparison of prior and posterior distributions
+    with optional true values.
 
     Parameters
     ----------
     posterior_samples : dict
-        Dictionary of posterior samples, with variable names as keys
+        Dictionary containing posterior samples for each parameter
     prior_dists : dict
-        Dictionary of prior distributions, with variable names as keys
+        Dictionary containing numpyro distribution objects for priors
     true_values : dict, optional
-        Dictionary of true parameter values, with variable names as keys
+        Dictionary containing true parameter values for comparison
     var_names : list, optional
-        List of variables to plot. If None, uses all keys in posterior_samples
+        List of variable names to plot. If None, uses all
+        variables in posterior_samples
     plot_var_names : dict or list, optional
-        Dictionary mapping variable names to display names,
-        or a list of display names in the same order as var_names
-    figsize : tuple, optional
-        Figure size, default is (12, 8)
-    n_cols : int, optional
-        Number of columns in the subplot grid
-    point_estimate : str, optional
-        Point estimate to show on plot ('mode', 'median', 'mean')
+        Display names for variables. If dict, maps var_names to display names.
+        If list, should have same length as var_names
+    figsize : tuple, default (12, 8)
+        Figure size
+    n_cols : int, default 3
+        Number of columns in subplot grid
+    point_estimate : str, default 'mean'
+        Type of point estimate to show ('mean', 'median', 'mode')
     save_fig_name : str, optional
-        If provided, saves the figure to a file with the given name
-    use_first_chain_only : bool, optional
-        If True, use only the first MCMC chain to reduce computation cost
-        and avoid potential issues with KDE estimation
-    prior_range_extension : float, optional
-        Factor to extend the range of the x-axis beyond the posterior's range
-        to better visualize prior distributions (default: 3.0)
+        If provided, saves the figure with this filename
+    use_first_chain_only : bool, default False
+        If True, uses only the first chain for posterior samples
+    prior_range_extension : float, default 2.0
+        Factor to extend the plotting range beyond the posterior range
 
     Returns
     -------
-    fig : matplotlib.figure.Figure
-        The created figure object
-    axes : numpy.ndarray
-        Array of axes objects for the subplots
+    fig, axes : matplotlib figure and axes objects
     """
-
     # Determine which variables to plot
     if var_names is None:
         var_names = list(posterior_samples.keys())
@@ -1373,109 +1438,132 @@ def plot_prior_posterior_comparison(
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
     axes = axes.flatten()
 
+    # Calculate plotting ranges for each variable
+    plot_ranges = {}
+    for var in var_names:
+        samples = posterior_samples[var]
+        if use_first_chain_only and samples.ndim > 1:
+            samples = samples[0]  # Use only first chain
+
+        # Get posterior range
+        post_min, post_max = np.percentile(samples.flatten(), [0.5, 99.5])
+        post_range = post_max - post_min
+
+        # Get prior distribution for this variable
+        prior_dist = prior_dists[var]
+
+        # Handle different distribution types for prior range calculation
+        if hasattr(prior_dist, 'support'):
+            # Use distribution support if available
+            support = prior_dist.support
+            if hasattr(support, 'lower_bound') and hasattr(support,
+                                                           'upper_bound'):
+                prior_min = float(support.lower_bound) \
+                    if support.lower_bound is not None else -np.inf
+                prior_max = float(support.upper_bound) \
+                    if support.upper_bound is not None else np.inf
+            else:
+                # Fallback: estimate reasonable range from distribution
+                prior_min, prior_max = _estimate_prior_range(prior_dist)
+        else:
+            # Fallback: estimate reasonable range from distribution
+            prior_min, prior_max = _estimate_prior_range(prior_dist)
+
+        # Combine posterior and prior ranges with extension
+        if np.isfinite(prior_min) and np.isfinite(prior_max):
+            # Both bounds are finite
+            range_min = min(post_min - prior_range_extension * post_range,
+                            prior_min)
+            range_max = max(post_max + prior_range_extension * post_range,
+                            prior_max)
+        elif np.isfinite(prior_min):
+            # Only lower bound is finite (e.g., HalfNormal)
+            range_min = min(post_min - prior_range_extension * post_range,
+                            prior_min)
+            range_max = post_max + prior_range_extension * post_range
+        elif np.isfinite(prior_max):
+            # Only upper bound is finite
+            range_min = post_min - prior_range_extension * post_range
+            range_max = max(post_max + prior_range_extension * post_range,
+                            prior_max)
+        else:
+            # No finite bounds (e.g., Normal distribution)
+            range_min = post_min - prior_range_extension * post_range
+            range_max = post_max + prior_range_extension * post_range
+
+        plot_ranges[var] = (range_min, range_max)
+
     # Plot each variable
     for i, var in enumerate(var_names):
-        if i < len(axes):
-            ax = axes[i]
+        ax = axes.flat[i] if len(var_names) > 1 else axes
 
-            # Get posterior samples for this variable
-            post_samples = posterior_samples[var]
+        # Get samples and plotting range
+        samples = posterior_samples[var]
+        if use_first_chain_only and samples.ndim > 1:
+            samples = samples[0]
 
-            # Check if we need to flatten or select only first chain
-            if hasattr(post_samples, 'ndim') and post_samples.ndim > 1:
-                if use_first_chain_only:
-                    post_samples = post_samples[0]  # Use only first chain
-                else:
-                    post_samples = post_samples.flatten()  # Flatten all chains
+        range_min, range_max = plot_ranges[var]
+        x_range = np.linspace(range_min, range_max, 1000)
 
-            # Get prior distribution for this variable
-            prior_dist = prior_dists[var]
+        # Plot prior distribution
+        prior_dist = prior_dists[var]
+        try:
+            # Evaluate log probability and convert to probability density
+            log_prob = prior_dist.log_prob(x_range)
+            # Handle any -inf values (outside support)
+            log_prob = np.where(np.isfinite(log_prob), log_prob, -np.inf)
+            prior_density = np.exp(log_prob)
 
-            # Determine range for plotting
-            x_min = np.percentile(post_samples, 0.1)
-            x_max = np.percentile(post_samples, 99.9)
+            # Only plot where density is meaningful
+            # (not zero due to support constraints)
+            valid_mask = prior_density > 1e-10
+            if np.any(valid_mask):
+                ax.plot(x_range[valid_mask], prior_density[valid_mask],
+                        'b--', linewidth=2, alpha=0.7, label='Prior')
+        except Exception as e:
+            print(f"Warning: Could not plot prior for {var}: {e}")
 
-            # Get posterior range and extend it
-            post_range = x_max - x_min
-            x_min = x_min - prior_range_extension * post_range / 2
-            x_max = x_max + prior_range_extension * post_range / 2
+        # Plot posterior KDE
+        sns.kdeplot(data=samples, ax=ax, label='Posterior',
+                    color='royalblue', fill=True,
+                    alpha=0.2,
+                    linewidth=1.5)
 
-            # Handle special distributions with bounded support
-            dist_name = prior_dist.__class__.__name__
+        # Calculate and plot posterior mode if requested
+        if point_estimate == 'mode':
+            kde = stats.gaussian_kde(samples)
+            mode_idx = np.argmax(kde(x_range))
+            mode_value = x_range[mode_idx]
+            ax.axvline(mode_value, color='dodgerblue', linestyle='-.',
+                       label='Posterior mode', linewidth=1.5)
+        elif point_estimate == 'median':
+            median_value = np.median(samples)
+            ax.axvline(median_value, color='dodgerblue', linestyle='-.',
+                       label='Posterior median', linewidth=1.5)
+        elif point_estimate == 'mean':
+            mean_value = np.mean(samples)
+            ax.axvline(mean_value, color='dodgerblue', linestyle='-.',
+                       label='Posterior mean', linewidth=1.5)
 
-            # For HalfNormal and other positive-only distributions
-            if dist_name in ['HalfNormal', 'Gamma', 'Exponential',
-                             'LogNormal', 'Weibull']:
-                x_min = max(0, x_min)  # Ensure we don't go below zero
+        # Plot true value if provided
+        if true_values is not None and var in true_values:
+            ax.axvline(true_values[var], color='maroon', linestyle='--',
+                       label='True value', linewidth=2)
+        # Set x-axis limits for positive-only distributions
+        prior_dist = prior_dists[var]
+        dist_name = type(prior_dist).__name__
+        if dist_name in ['HalfNormal', 'Gamma', 'Exponential',
+                         'LogNormal', 'Weibull']:
+            ax.set_xlim(left=0)
 
-            # Very large range for heavy-tailed distributions
-            if dist_name in ['Cauchy', 'StudentT']:
-                x_min = x_min - prior_range_extension * post_range
-                x_max = x_max + prior_range_extension * post_range
-
-            # For bounded distributions, respect the bounds
-            if hasattr(prior_dist, 'support'):
-                try:
-                    if hasattr(prior_dist.support, 'lower_bound'):
-                        if prior_dist.support.lower_bound > -float('inf'):
-                            x_min = max(x_min, prior_dist.support.lower_bound)
-                    if hasattr(prior_dist.support, 'upper_bound'):
-                        if prior_dist.support.upper_bound < float('inf'):
-                            x_max = min(x_max, prior_dist.support.upper_bound)
-                except (AttributeError, ValueError):
-                    pass
-
-            # Create x range for plotting based on the adjusted range
-            x = np.linspace(x_min, x_max, 1000)
-
-            # Plot prior distribution
-            try:
-                # For numpyro distributions with log_prob method
-                prior_pdf = np.exp(prior_dist.log_prob(x))
-                ax.plot(x, prior_pdf, label='Prior', linestyle='dashed',
-                        color='coral', linewidth=1.5)
-            except Exception as e:
-                print(f"Warning: Could not plot prior for {var}: {e}")
-
-            # Plot posterior KDE
-            sns.kdeplot(data=post_samples, ax=ax, label='Posterior',
-                        color='royalblue', fill=True,
-                        alpha=0.2,
-                        linewidth=1.5)
-
-            # Calculate and plot posterior mode if requested
-            if point_estimate == 'mode':
-                kde = stats.gaussian_kde(post_samples)
-                mode_idx = np.argmax(kde(x))
-                mode_value = x[mode_idx]
-                ax.axvline(mode_value, color='dodgerblue', linestyle='-.',
-                           label='Posterior mode', linewidth=1.5)
-            elif point_estimate == 'median':
-                median_value = np.median(post_samples)
-                ax.axvline(median_value, color='dodgerblue', linestyle='-.',
-                           label='Posterior median', linewidth=1.5)
-            elif point_estimate == 'mean':
-                mean_value = np.mean(post_samples)
-                ax.axvline(mean_value, color='dodgerblue', linestyle='-.',
-                           label='Posterior mean', linewidth=1.5)
-
-            # Plot true value if provided
-            if true_values is not None and var in true_values:
-                ax.axvline(true_values[var], color='maroon', linestyle='--',
-                           label='True value', linewidth=2)
-            # Set x-axis limits for positive-only distributions
-            if dist_name in ['HalfNormal', 'Gamma', 'Exponential',
-                             'LogNormal', 'Weibull']:
-                ax.set_xlim(left=0)
-
-            # Set plot labels and customize appearance
-            ax.set_xlabel(var_display_names[var])
-            ax.set_ylabel('Density')
-            ax.xaxis.set_minor_locator(AutoMinorLocator())
-            ax.yaxis.set_minor_locator(AutoMinorLocator())
-            ax.tick_params(which='both', direction='in', top=True, right=True)
-            # ax.grid(True, linestyle='--', alpha=0.3)
-            ax.legend(frameon=True, framealpha=0.9)
+        # Set plot labels and customize appearance
+        ax.set_xlabel(var_display_names[var])
+        ax.set_ylabel('Density')
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
+        ax.yaxis.set_minor_locator(AutoMinorLocator())
+        ax.tick_params(which='both', direction='in', top=True, right=True)
+        # ax.grid(True, linestyle='--', alpha=0.3)
+        ax.legend(frameon=True, framealpha=0.9)
 
     # Hide any unused axes
     for i in range(n_vars, len(axes)):
