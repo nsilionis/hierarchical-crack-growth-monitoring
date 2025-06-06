@@ -499,14 +499,12 @@ class MTLBayesianModel:
         else:
             self.priors = priors
 
-        # Default hyperpriors for random effects if none provided
         if hyperpriors is None:
-            self.hyperpriors = {
-                "weibull_concentration": dist.Gamma(10.0, 1.0),
-                "weibull_scale": dist.Gamma(15.0, 1.0)
-            }
+            self.hyperpriors = hyperpriors
+            self.priors["ds"] = dist.Weibull(14.9, 1.6)
         else:
             self.hyperpriors = hyperpriors
+            self._validate_hyperpriors()
 
         # Store data
         self.crack_growth_data = crack_growth_data
