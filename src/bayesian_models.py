@@ -461,3 +461,385 @@ class STLBayesianModel:
         }
 
         return predictions
+
+
+class MTLBayesianModel:
+    """
+    Multi-task learning Bayesian model for Paris law parameters.
+
+    This class implements a hierarchical Bayesian model where:
+    - Material parameters (C, m) are fixed effects shared across components
+    - Stress ranges are random effects varying between components
+    - Component data is pooled for joint inference
+    """
+
+    def __init__(self,
+                 priors: Optional[Dict[str, dist.Distribution]] = None,
+                 hyperpriors: Optional[Dict[str, dist.Distribution]] = None,
+                 crack_growth_data: Optional[Dict[str, Any]] = None):
+        """
+        Initialize the MTL Bayesian model with priors and data.
+
+        Parameters
+        ----------
+        priors : dict, optional
+            Dictionary of prior distributions for fixed effect parameters
+        hyperpriors : dict, optional
+            Dictionary of hyperprior distributions for random effect parameters
+        crack_growth_data : dict, optional
+            Dictionary containing the crack growth data for multiple components
+        """
+        # Default priors for fixed effects if none provided
+        if priors is None:
+            self.priors = {
+                "logc": dist.Normal(-30.0, 2.0),
+                "m": dist.Normal(3.0, 0.5),
+                "noise_std": dist.HalfNormal(2.0)
+            }
+        else:
+            self.priors = priors
+
+        # Default hyperpriors for random effects if none provided
+        if hyperpriors is None:
+            self.hyperpriors = {
+                "weibull_concentration": dist.Gamma(10.0, 1.0),
+                "weibull_scale": dist.Gamma(15.0, 1.0)
+            }
+        else:
+            self.hyperpriors = hyperpriors
+
+        # Store data
+        self.crack_growth_data = crack_growth_data
+
+        # Get number of components from data
+        if crack_growth_data is not None:
+            self.n_components = len(crack_growth_data["times"])
+        else:
+            self.n_components = 0
+
+        # Initialize storage for posterior samples
+        self.mcmc = None
+        self.posterior_samples = None
+
+    def model(self, component_idx=0, Y=1.12, navg=None):
+        """
+        Hierarchical Bayesian model for Paris law
+        parameters across multiple components.
+
+        Parameters
+        ----------
+        component_idx : int, optional
+            Index of the component to model (used for interface compatibility)
+        Y : float, optional
+            Geometry factor for SIF calculation
+        navg : float, optional
+            Average cycles per year. If None, uses a default value
+
+        Returns
+        -------
+        None
+        """
+        # Fixed effects - shared across all components
+        logc = numpyro.sample("logc", self.priors["logc"])
+        m = numpyro.sample("m", self.priors["m"])
+        noise_std = numpyro.sample("noise_std", self.priors["noise_std"])
+
+        # Hyperpriors for stress range distribution
+        weibull_concentration = numpyro.sample("weibull_concentration",
+                                               self.hyperpriors[
+                                                    "weibull_concentration"])
+        weibull_scale = numpyro.sample("weibull_scale",
+                                       self.hyperpriors["weibull_scale"])
+
+        # Random effects - component-specific stress ranges
+        with numpyro.plate("components", self.n_components):
+            ds = numpyro.sample("ds",
+                                dist.Weibull(weibull_concentration,
+                                             weibull_scale))
+
+        # Default navg if not provided
+        if navg is None:
+            navg = 2.8e6
+
+        # Initialize list to store predictions for all components
+        predicted_crack_lengths_all = []
+
+        # Process each component
+        for comp_idx in range(self.n_components):
+            # Extract data for this component
+            times = self.crack_growth_data["times"][comp_idx]
+            data = self.crack_growth_data["noisy_crack_lengths"][comp_idx]
+
+            # Initial crack length (first observation)
+            init_crack = data[0]
+
+            # Create Paris-Erdogan model instance with
+            # component-specific stress
+            paris = ParisErdogan(
+                logc=logc,
+                m=m,
+                ds=ds[comp_idx],  # Component-specific stress range
+                navg=navg,
+                a0=init_crack,
+                Y=Y,
+                t=times
+            )
+
+            # Initialize array for predicted crack lengths
+            crack_lengths = jnp.zeros(len(times))
+            crack_lengths = crack_lengths.at[0].set(init_crack)
+
+            # Generate crack growth trajectory using the Paris-Erdogan model
+            for i in range(1, len(times)):
+                crack_lengths = crack_lengths.at[i].set(
+                    paris.state_eq(crack_lengths[i-1], times[i-1])
+                )
+
+            # Likelihood for observations of this component
+            with numpyro.plate(f"obs_component_{comp_idx}", len(data)):
+                numpyro.sample(
+                    f"obs_{comp_idx}",
+                    dist.Normal(crack_lengths, noise_std),
+                    obs=data
+                )
+
+            # Store predicted crack lengths
+            predicted_crack_lengths_all.append(crack_lengths[1:])
+
+        # Store ALL predicted crack lengths for all components
+        # Stack them into a single array: [n_components, n_time_steps]
+        numpyro.deterministic("predicted_crack_lengths",
+                              jnp.stack(predicted_crack_lengths_all))
+
+    def run_inference(self,
+                      component_idx: int = 0,
+                      Y: float = 1.12,
+                      navg: Optional[float] = None,
+                      num_warmup: int = 1000,
+                      num_samples: int = 1000,
+                      num_chains: int = 4,
+                      progress_bar: bool = True) -> Dict:
+        """
+        Run MCMC inference for the hierarchical model.
+
+        Parameters
+        ----------
+        component_idx : int, optional
+            Index of the component (kept for interface compatibility,
+            but MTL processes all components)
+        Y : float, optional
+            Geometry factor for SIF calculation
+        navg : float, optional
+            Average cycles per year. If None, uses a default value
+        num_warmup : int, optional
+            Number of warmup steps for MCMC
+        num_samples : int, optional
+            Number of samples to draw after warmup
+        num_chains : int, optional
+            Number of MCMC chains to run
+        progress_bar : bool, optional
+            Whether to show a progress bar during sampling
+
+        Returns
+        -------
+        dict
+            Dictionary containing MCMC results and summary
+        """
+        # Set up MCMC
+        nuts_kernel = NUTS(self.model,
+                           target_accept_prob=0.9)
+        self.mcmc = MCMC(
+            nuts_kernel,
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            progress_bar=progress_bar
+        )
+
+        # Run inference
+        rng_key = jr.PRNGKey(0)
+        self.mcmc.run(
+            rng_key,
+            component_idx=component_idx,
+            Y=Y,
+            navg=navg
+        )
+
+        # Extract and store results
+        self.posterior_samples = self.mcmc.get_samples(group_by_chain=True)
+
+        # Create summary statistics
+        summary = az.summary(az.from_numpyro(self.mcmc), round_to=3)
+
+        # Return results and summary
+        return {
+            "mcmc": self.mcmc,
+            "samples": self.posterior_samples,
+            "summary": summary
+        }
+
+    def summarise_posterior(self, print_summary: bool = True
+                            ) -> az.InferenceData:
+        """
+        Create a summary of the posterior distribution.
+
+        Parameters
+        ----------
+        print_summary : bool, optional
+            Whether to print the summary to stdout
+
+        Returns
+        -------
+        arviz.InferenceData
+            ArviZ InferenceData object containing the posterior data
+        """
+        if self.mcmc is None:
+            raise ValueError("No MCMC results available. \
+                             Please run inference first.")
+
+        # Convert to ArviZ format
+        inference_data = az.from_numpyro(self.mcmc)
+
+        if print_summary:
+            print(az.summary(inference_data, round_to=3))
+
+        return inference_data
+
+    def generate_posterior_predictive(self,
+                                      num_samples: int = 1000,
+                                      component_idx: int = 0,
+                                      Y: float = 1.12,
+                                      navg: Optional[float] = None,
+                                      random_seed: int = 42
+                                      ) -> Dict[str, jnp.ndarray]:
+        """
+        Generate posterior predictive samples for the specified component.
+
+        For interface compatibility with STLBayesianModel, this method
+        returns predictions for a single component specified by component_idx.
+
+        Parameters
+        ----------
+        num_samples : int, optional
+            Number of posterior samples to use for prediction
+        component_idx : int, optional
+            Index of the component to predict
+        Y : float, optional
+            Geometry factor for SIF calculation
+        navg : float, optional
+            Average cycles per year. If None, uses default value 2.8e6
+        random_seed : int, optional
+            Random seed for reproducibility
+
+        Returns
+        -------
+        dict
+            Dictionary of predictions for the specified component
+        """
+        if self.posterior_samples is None:
+            raise ValueError("No posterior samples available. \
+                             Please run inference first.")
+
+        # Set up the RNG key
+        rng_key = jr.PRNGKey(random_seed)
+
+        # Flatten chains for prediction, excluding deterministic variables
+        flat_samples = {}
+        for k, v in self.posterior_samples.items():
+            if k != 'predicted_crack_lengths':
+                flat_samples[k] = v.reshape(-1)
+
+        # Select random subset of samples if requested
+        n_available = len(flat_samples["logc"])
+        if num_samples < n_available:
+            idx_key, pred_key = jr.split(rng_key)
+            indices = jr.choice(
+                idx_key, n_available, (num_samples,), replace=False)
+            for k in flat_samples.keys():
+                flat_samples[k] = flat_samples[k][indices]
+        else:
+            pred_key = rng_key
+
+        # Define a predictive model for the specified component
+        def predictive_model(component_idx=0, Y=1.12, navg=None):
+            # Prior distributions - will be overridden by the posterior samples
+            logc = numpyro.sample("logc", self.priors["logc"])
+            m = numpyro.sample("m", self.priors["m"])
+            noise_std = numpyro.sample("noise_std", self.priors["noise_std"])
+
+            # Hyperpriors
+            weibull_concentration = numpyro.sample("weibull_concentration",
+                                                   self.hyperpriors[
+                                                    "weibull_concentration"]
+                                                   )
+            weibull_scale = numpyro.sample("weibull_scale",
+                                           self.hyperpriors["weibull_scale"])
+
+            # Component-specific stress ranges
+            with numpyro.plate("components", self.n_components):
+                ds = numpyro.sample("ds",
+                                    dist.Weibull(weibull_concentration,
+                                                 weibull_scale))
+
+            # Default navg if not provided
+            if navg is None:
+                navg = 2.8e6
+
+            # Extract data for the specified component
+            times = self.crack_growth_data["times"][component_idx]
+            data = self.crack_growth_data["noisy_crack_lengths"][component_idx]
+
+            # Initial crack length (first observation)
+            init_crack = data[0]
+
+            # Create Paris-Erdogan model instance
+            paris = ParisErdogan(
+                logc=logc,
+                m=m,
+                ds=ds[component_idx],  # Use component-specific stress
+                navg=navg,
+                a0=init_crack,
+                Y=Y,
+                t=times
+            )
+
+            # Initialize array for predicted crack lengths
+            crack_lengths = jnp.zeros(len(times))
+            crack_lengths = crack_lengths.at[0].set(init_crack)
+
+            # Generate crack growth trajectory
+            for i in range(1, len(times)):
+                crack_lengths = crack_lengths.at[i].set(
+                    paris.state_eq(crack_lengths[i-1], times[i-1])
+                )
+
+            # Store deterministic crack growth for plotting
+            numpyro.deterministic("predicted_crack_lengths", crack_lengths)
+
+            # Sample from the posterior predictive distribution
+            numpyro.sample("obs", dist.Normal(crack_lengths, noise_std))
+
+        # Use Numpyro's Predictive to generate posterior predictive samples
+        predictive = Predictive(predictive_model,
+                                posterior_samples=flat_samples,
+                                num_samples=num_samples,
+                                return_sites=["predicted_crack_lengths", "obs"]
+                                )
+
+        # Generate samples
+        predictive_samples = predictive(
+            pred_key,
+            component_idx=component_idx,
+            Y=Y,
+            navg=navg
+        )
+
+        # Format the results
+        predictions = {
+            "predicted_crack_lengths":
+            predictive_samples["predicted_crack_lengths"],
+            "obs":
+            predictive_samples["obs"]
+        }
+
+        return predictions
