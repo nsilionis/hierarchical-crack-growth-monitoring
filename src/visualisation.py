@@ -1732,191 +1732,205 @@ def plot_posterior_predictive_stl(posterior_predictions, true_times,
     return fig, ax, stats
 
 
-def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
-                                  plot_var_name=None, figsize=None, n_cols=3,
-                                  point_estimate="mode", kde_kwargs=None,
-                                  save_fig_name=None,
-                                  use_first_chain_only=False):
+def plot_posterior_predictive_mtl(posterior_predictions_list,
+                                  true_times_list, true_crack_lengths_list,
+                                  observed_times_list,
+                                  observed_crack_lengths_list,
+                                  max_samples=50, figsize=(12, 8),
+                                  save_fig_name=None):
     """
-    Plot posterior distributions of random effects (component-specific
-    parameters) as KDEs with target values overlaid as vertical lines.
-
-    This function is designed for hierarchical Bayesian models where random
-    effects vary by component (e.g., stress ranges ds[i] in multi-task
-    learning).
+    Plot posterior predictive samples for Multi-Task Learning (MTL) model
+    as subplots with rows representing components and columns representing
+    predictions vs observations.
 
     Parameters
     ----------
-    posterior_samples : dict
-        Dictionary containing posterior samples from MCMC inference.
-        Should contain param_name as a key with shape (n_samples,
-        n_components).
-    targets : dict
-        Dictionary containing target/true values for each component.
-        Keys should be in the format f"{param_name}[{i}]" (e.g., "ds[0]",
-        "ds[1]").
-    param_name : str, default="ds"
-        Name of the random effect parameter in posterior_samples.
-    plot_var_name : str, optional
-        Display name for the parameter (e.g.,
-        r"$\\Delta S \\ \\mathrm{[MPa]}$"). If None, uses param_name.
-    figsize : tuple, optional
-        Figure size (width, height). If None, automatically determined.
-    n_cols : int, default=3
-        Number of columns in subplot grid.
-    point_estimate : str, default="mode"
-        Type of point estimate to show ("mode", "mean", or "median").
-    kde_kwargs : dict, optional
-        Additional keyword arguments for seaborn.kdeplot.
+    posterior_predictions_list : list of dict
+        List of dictionaries containing posterior predictive samples
+        for each component. Each dict should have keys:
+        - 'predicted_crack_lengths': Array of shape (n_samples, n_times)
+        - 'obs': Optional array of shape (n_samples, n_times)
+        with observation noise
+    true_times_list : list of array
+        List of time arrays for true trajectories, one per component
+    true_crack_lengths_list : list of array
+        List of true crack length arrays, one per component
+    observed_times_list : list of array
+        List of observed time arrays, one per component
+    observed_crack_lengths_list : list of array
+        List of observed crack length arrays, one per component
+    max_samples : int, default 50
+        Maximum number of posterior samples to plot for clarity
+    figsize : tuple, default (12, 8)
+        Figure size as (width, height) in inches
     save_fig_name : str, optional
-        Filename to save the figure. If None, figure is not saved.
-    use_first_chain_only : bool, default=False
-        If True, use only the first MCMC chain for plotting.
+        If provided, saves the figure with this filename
 
     Returns
     -------
     fig : matplotlib.figure.Figure
-        The figure object.
+        The figure object
     axes : numpy.ndarray
-        Array of subplot axes.
-
-    Examples
-    --------
-    >>> # Plot stress range posteriors with targets
-    >>> targets = {"ds[0]": 16.0, "ds[1]": 22.0, "ds[2]": 19.0}
-    >>> fig, axes = plot_random_effect_posteriors(
-    ...     posterior_samples=mtl_results['samples'],
-    ...     targets=targets,
-    ...     param_name="ds",
-    ...     plot_var_name=r"$\\Delta S \\ \\mathrm{[MPa]}$"
-    ... )
+        Array of matplotlib axes objects
+    stats : dict
+        Dictionary containing statistics for each component
     """
     import numpy as np
     import matplotlib.pyplot as plt
-    import seaborn as sns
-    from scipy import stats
-    from pathlib import Path
+    from matplotlib.ticker import AutoMinorLocator
 
-    # Extract parameter samples from posterior
-    if param_name not in posterior_samples:
-        raise ValueError(f"Parameter '{param_name}' not found in "
-                         "posterior_samples")
+    # Get number of components
+    n_components = len(posterior_predictions_list)
 
-    param_samples = posterior_samples[param_name]
+    # Create subplot layout: (n_components, 2)
+    # Columns: 0 = predictions, 1 = observations
+    fig, axes = plt.subplots(n_components, 2, figsize=figsize, squeeze=False)
 
-    # Handle chain dimension if present
-    if use_first_chain_only and param_samples.ndim == 3:
-        param_samples = param_samples[0]  # Use first chain only
-    elif param_samples.ndim == 3:
-        # Flatten across chains: (n_chains, n_samples, n_components) ->
-        # (n_chains*n_samples, n_components)
-        n_chains, n_samples, n_components = param_samples.shape
-        param_samples = param_samples.reshape(n_chains * n_samples,
-                                              n_components)
+    # Initialize statistics dictionary
+    component_stats = {}
 
-    # Determine number of components
-    if param_samples.ndim != 2:
-        raise ValueError(f"Expected parameter samples to be 2D after "
-                         f"processing, got shape {param_samples.shape}")
+    # Process each component
+    for comp_idx in range(n_components):
+        # Get data for this component
+        posterior_predictive = posterior_predictions_list[comp_idx]
+        true_times = true_times_list[comp_idx]
+        true_crack_lengths = true_crack_lengths_list[comp_idx]
+        observed_times = observed_times_list[comp_idx]
+        observed_crack_lengths = observed_crack_lengths_list[comp_idx]
 
-    n_samples, n_components = param_samples.shape
+        # Plot predictions (left column)
+        ax_pred = axes[comp_idx, 0]
+        pred_samples = posterior_predictive['predicted_crack_lengths']
+        pred_mean = np.mean(pred_samples, axis=0)
+        pred_lower = np.percentile(pred_samples, 2.5, axis=0)
+        pred_upper = np.percentile(pred_samples, 97.5, axis=0)
 
-    # Set up plotting parameters
-    if plot_var_name is None:
-        plot_var_name = param_name
+        # Plot individual prediction trajectories
+        n_plot = min(max_samples, pred_samples.shape[0])
+        for i in range(n_plot):
+            ax_pred.plot(observed_times, pred_samples[i], color='lavender',
+                         alpha=0.4, zorder=1)
 
-    if kde_kwargs is None:
-        kde_kwargs = {}
-    # Match styling from plot_prior_posterior_comparison
-    kde_kwargs.setdefault('fill', True)
-    kde_kwargs.setdefault('alpha', 0.2)
-    kde_kwargs.setdefault('linewidth', 1.5)
-    kde_kwargs.setdefault('color', 'royalblue')
+        # Plot credible interval
+        ax_pred.fill_between(observed_times, pred_lower, pred_upper,
+                             color='royalblue', alpha=0.15,
+                             label=r'95\% Credible Interval', zorder=2)
 
-    # Calculate subplot layout
-    n_rows = int(np.ceil(n_components / n_cols))
+        # Plot posterior mean
+        ax_pred.plot(observed_times, pred_mean, color='royalblue',
+                     linewidth=1.5, linestyle="dashdot",
+                     label='Posterior Mean', zorder=4)
 
-    # Set figure size
-    if figsize is None:
-        width = min(4.0 * n_cols, 16.0)  # Cap at reasonable width
-        height = min(3.0 * n_rows, 12.0)  # Cap at reasonable height
-        figsize = (width, height)
+        # Plot true trajectory
+        ax_pred.plot(true_times, true_crack_lengths, 'darkorange',
+                     linewidth=1.5, label='True trajectory', zorder=3)
 
-    # Create subplots
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+        # Plot observations
+        ax_pred.scatter(observed_times, observed_crack_lengths,
+                        color='coral', s=40, label='Observations',
+                        zorder=5, edgecolors='white', linewidths=1)
 
-    # Handle single subplot case
-    if n_components == 1:
-        axes = np.array([axes])
-    elif n_rows == 1:
-        axes = axes.reshape(1, -1)
-    elif n_cols == 1:
-        axes = axes.reshape(-1, 1)
+        # Customize predictions subplot
+        ax_pred.set_xlabel('Time (years)', fontsize=10)
+        ax_pred.set_ylabel('Crack length (mm)', fontsize=10)
+        # ax_pred.set_title(f'Component {comp_idx + 1} - Predictions',
+        #                   fontsize=11)
+        ax_pred.grid(True, linestyle='--', alpha=0.2)
+        ax_pred.set_xlim(left=0)
+        ax_pred.set_ylim(bottom=min(true_crack_lengths)*0.95)
+        ax_pred.legend(fontsize=8, frameon=True, framealpha=0.2)
+        ax_pred.xaxis.set_minor_locator(AutoMinorLocator())
+        ax_pred.yaxis.set_minor_locator(AutoMinorLocator())
 
-    # Flatten axes for easier indexing
-    axes_flat = axes.flatten()
+        # Plot observations (right column)
+        ax_obs = axes[comp_idx, 1]
+        if "obs" in posterior_predictive:
+            obs_samples = posterior_predictive['obs']
+            obs_mean = np.mean(obs_samples, axis=0)
+            obs_lower = np.percentile(obs_samples, 2.5, axis=0)
+            obs_upper = np.percentile(obs_samples, 97.5, axis=0)
 
-    # Plot each component's posterior
-    for i in range(n_components):
-        ax = axes_flat[i]
+            # Plot individual observation trajectories
+            for i in range(n_plot):
+                ax_obs.plot(observed_times, obs_samples[i], color='thistle',
+                            alpha=0.3, zorder=1)
 
-        # Get samples for this component
-        component_samples = param_samples[:, i]
+            # Plot credible interval for observations
+            ax_obs.fill_between(observed_times, obs_lower, obs_upper,
+                                color='darkslateblue', alpha=0.15,
+                                label=r'95\% Credible Interval', zorder=2)
 
-        # Create KDE plot
-        sns.kdeplot(component_samples, ax=ax, **kde_kwargs)
+            # Plot mean of observations
+            ax_obs.plot(observed_times, obs_mean, color='mediumslateblue',
+                        linewidth=1.5, linestyle="dashdot",
+                        label='Posterior Mean', zorder=4)
+        else:
+            # Fallback to predictions if observations not available
+            print(f"Warning: No observation samples for component "
+                  f"{comp_idx + 1}, using predictions")
+            for i in range(n_plot):
+                ax_obs.plot(observed_times, pred_samples[i], color='thistle',
+                            alpha=0.3, zorder=1)
 
-        # Add point estimate
-        if point_estimate == "mode":
-            # Estimate mode using KDE
-            kde = stats.gaussian_kde(component_samples)
-            x_range = np.linspace(component_samples.min(),
-                                  component_samples.max(), 1000)
-            kde_values = kde(x_range)
-            mode_value = x_range[np.argmax(kde_values)]
-            ax.axvline(mode_value, color='dodgerblue', linestyle='-.',
-                       linewidth=1.5, label=f'Posterior mode: \
-                        {mode_value:.2f} MPa')
-        elif point_estimate == "mean":
-            mean_value = np.mean(component_samples)
-            ax.axvline(mean_value, color='dodgerblue', linestyle='-.',
-                       linewidth=1.5, label=f'Mean: {mean_value:.2f}')
-        elif point_estimate == "median":
-            median_value = np.median(component_samples)
-            ax.axvline(median_value, color='dodgerblue', linestyle='-.',
-                       linewidth=1.5, label=f'Median: {median_value:.2f} \
-                        MPa')
+            ax_obs.fill_between(observed_times, pred_lower, pred_upper,
+                                color='darkslateblue', alpha=0.15,
+                                label=r'95% Credible Interval', zorder=2)
 
-        # Add target value if available
-        target_key = f"{param_name}[{i}]"
-        if target_key in targets:
-            target_value = targets[target_key]
-            ax.axvline(target_value, color='maroon', linestyle='--',
-                       linewidth=2, label=f'Target: {target_value:.2f} MPa')
+            ax_obs.plot(observed_times, pred_mean, color='mediumslateblue',
+                        linewidth=1.5, linestyle="dashdot",
+                        label='Posterior Mean', zorder=4)
 
-        # Set labels and title
-        ax.set_xlabel(plot_var_name)
-        ax.set_ylabel('Density')
+        # Plot true trajectory
+        ax_obs.plot(true_times, true_crack_lengths, 'darkorange',
+                    linewidth=1.5, label='True trajectory', zorder=3)
 
-        # Match tick formatting from plot_prior_posterior_comparison
-        ax.xaxis.set_minor_locator(AutoMinorLocator())
-        ax.yaxis.set_minor_locator(AutoMinorLocator())
-        ax.tick_params(which='both', direction='in', top=True, right=True)
+        # Plot observations
+        ax_obs.scatter(observed_times, observed_crack_lengths,
+                       color='coral', s=40, label='Observations',
+                       zorder=5, edgecolors='white', linewidths=1)
 
-        # Match legend styling from plot_prior_posterior_comparison
-        ax.legend(frameon=True, framealpha=0.9)
+        # Customize observations subplot
+        ax_obs.set_xlabel('Time (years)', fontsize=10)
+        ax_obs.set_ylabel('Crack length (mm)', fontsize=10)
+        # ax_obs.set_title(f'Component {comp_idx + 1} - Observations',
+        #                  fontsize=11)
+        ax_obs.grid(True, linestyle='--', alpha=0.2)
+        ax_obs.set_xlim(left=0)
+        ax_obs.set_ylim(bottom=min(true_crack_lengths)*0.95)
+        ax_obs.legend(fontsize=8, frameon=True, framealpha=0.2)
+        ax_obs.xaxis.set_minor_locator(AutoMinorLocator())
+        ax_obs.yaxis.set_minor_locator(AutoMinorLocator())
 
-    # Hide unused subplots
-    for i in range(n_components, len(axes_flat)):
-        axes_flat[i].set_visible(False)
+        # Calculate statistics for this component
+        pred_rmse = np.sqrt(np.mean((pred_mean - observed_crack_lengths)**2))
+        component_stats[f"component_{comp_idx + 1}"] = {
+            "predictions_rmse": pred_rmse,
+            "predictions_mean": pred_mean,
+            "predictions_lower_ci": pred_lower,
+            "predictions_upper_ci": pred_upper,
+            "predictions_ci_width": pred_upper - pred_lower
+        }
+
+        if "obs" in posterior_predictive:
+            obs_rmse = np.sqrt(np.mean((obs_mean - observed_crack_lengths)**2))
+            component_stats[f"component_{comp_idx + 1}"].update({
+                "observations_rmse": obs_rmse,
+                "observations_mean": obs_mean,
+                "observations_lower_ci": obs_lower,
+                "observations_upper_ci": obs_upper,
+                "observations_ci_width": obs_upper - obs_lower
+            })
 
     # Adjust layout
     plt.tight_layout()
 
     # Save figure if requested
-    if save_fig_name:
-        output_dir = Path("figures")
-        output_dir.mkdir(parents=True, exist_ok=True)
+    if save_fig_name is not None:
+        from pathlib import Path
+        main_dir = Path(__file__).resolve().parents[1]
+        output_dir = main_dir / "figures"
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / save_fig_name
         suffix = output_path.suffix.lower()
         if suffix in [".png", ".jpg", ".jpeg"]:
@@ -1924,4 +1938,4 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
         else:
             plt.savefig(output_path, bbox_inches="tight")
 
-    return fig, axes
+    return fig, axes, component_stats
