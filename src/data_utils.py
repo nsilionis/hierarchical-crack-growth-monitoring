@@ -331,7 +331,16 @@ class CrackObservationGenerator:
         ----------
         trajectories : Dict[str, Any]
             Dictionary containing crack growth trajectories, typically from
-            TrajectorySelector.extract_trajectories()
+            TrajectorySelector.extract_trajectories(). The dictionary should
+            have the following structure:
+            - 'times': List of arrays, one per trajectory,
+            containing time points
+            - 'crack_lengths': List of arrays, one per trajectory,
+            containing crack lengths
+            - 'paris_c': Array of Paris law C parameters for each trajectory
+            - 'paris_m': Array of Paris law m parameters for each trajectory
+            - 'initial_crack_length': Array of initial crack
+            lengths for each trajectory
         random_seed : int, optional
             Random seed for reproducibility
         """
