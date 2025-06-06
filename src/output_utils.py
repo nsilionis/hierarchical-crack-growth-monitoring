@@ -12,7 +12,8 @@ This module contains functions for:
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
+from datetime import datetime
 
 
 def calculate_parameter_error_metrics(
@@ -67,252 +68,173 @@ def calculate_parameter_error_metrics(
 
 
 def calculate_component_metrics(
-        component_results: List[Dict[str, Any]],
-        true_noise_std: Optional[float] = None) -> pd.DataFrame:
+        component_results: List[Dict[str, Any]]) -> pd.DataFrame:
     """
-    Calculate metrics for multiple components and format as a DataFrame.
+    Calculate various metrics comparing true vs
+    inferred parameters across components.
 
     Parameters
     ----------
     component_results : List[Dict[str, Any]]
-        List of dictionaries containing inference results for each component
-        Each dictionary should have:
+        List of dictionaries containing results for each component.
+        Each dict should have:
         - 'index': Component index
-        - 'true_params': Dict of true parameter values
-        - 'inferred_params': Dict of inferred parameter values
-    true_noise_std : float, optional
-        True noise standard deviation value, if not included in true_params
+        - 'true_params': Dictionary with true parameter values
+        - 'inferred_params': Dictionary with inferred parameter
+        values and uncertainties
 
     Returns
     -------
     pd.DataFrame
-        DataFrame with comparison metrics for all components
+        DataFrame containing comparison metrics for each component
     """
-    rows = []
+    # Initialize lists to store results
+    components = []
 
-    for i, res in enumerate(component_results):
-        # Extract parameters
-        true_params = res['true_params']
-        inferred_params = res['inferred_params']
+    # Parameter tracking dictionaries
+    param_data: Dict[str, Dict[str, List[Union[float, bool]]]] = {
+        'logc': {'true': [], 'inferred': [], 'std': [], 'error': [],
+                 'rel_error': []},
+        'ds': {'true': [], 'inferred': [], 'std': [], 'error': [],
+               'rel_error': [], 'present': False},
+        'm': {'true': [], 'inferred': [], 'std': [], 'error': [],
+              'rel_error': []},
+        'noise_std': {'true': [], 'inferred': [], 'std': [], 'error': [],
+                      'rel_error': []}
+    }
 
-        # Add noise_std to true_params if provided separately
-        if true_noise_std is not None and 'noise_std' not in true_params:
-            true_params['noise_std'] = true_noise_std
+    # Process each component
+    for result in component_results:
+        idx = result['index']
+        components.append(idx)
 
-        # Create row with component index
-        row = {'Component': i+1}
+        # Process each parameter (logc, ds if available, m, noise_std)
+        for param_name in ['logc', 'ds', 'm', 'noise_std']:
+            # Check if this parameter exists in both true and inferred params
+            if param_name in result['true_params'] and \
+                    param_name in result['inferred_params']:
+                # Mark parameter as present if it's ds
+                # (to indicate we should include it in output)
+                if param_name == 'ds':
+                    param_data[param_name]['present'] = True
 
-        # Add true and inferred values for each parameter
-        for param in ['logc', 'm', 'noise_std']:
-            if param in true_params:
-                row[f'True {param}'] = true_params[param]
+                # Get values
+                true_val = result['true_params'][param_name]
+                inf_val = result['inferred_params'][param_name]
+                std_val = result['inferred_params'].get(
+                    f'{param_name}_sd', np.nan)
 
-            if param in inferred_params:
-                row[f'Inferred {param}'] = inferred_params[param]
+                # Calculate metrics
+                error = true_val - inf_val
+                # Use absolute value of true_val for logc which can be negative
+                rel_error = 100 * error / (
+                    abs(true_val) if param_name == 'logc' else true_val)
 
-                # Add standard deviation if available
-                if f'{param}_sd' in inferred_params:
-                    row[f'{param} SD'] = inferred_params[f'{param}_sd']
+                # Store data
+                param_data[param_name]['true'].append(true_val)
+                param_data[param_name]['inferred'].append(inf_val)
+                param_data[param_name]['std'].append(std_val)
+                param_data[param_name]['error'].append(error)
+                param_data[param_name]['rel_error'].append(rel_error)
+            else:
+                # If parameter is missing, add NaN placeholders
+                if param_name != 'ds':  # Only add NaN for required params
+                    param_data[param_name]['true'].append(np.nan)
+                    param_data[param_name]['inferred'].append(np.nan)
+                    param_data[param_name]['std'].append(np.nan)
+                    param_data[param_name]['error'].append(np.nan)
+                    param_data[param_name]['rel_error'].append(np.nan)
 
-        # Calculate error metrics
-        for param in ['logc', 'm', 'noise_std']:
-            if param in true_params and param in inferred_params:
-                # Calculate MAPE
-                mape = 100 * abs(inferred_params[param] - true_params[param]) \
-                    / abs(true_params[param])
-                row[f'{param} MAPE (%)'] = mape
+    # Create base data dictionary
+    data: Dict[str, List] = {'Component': components}
 
-                # Calculate RMSE
-                rmse = np.sqrt(
-                    (inferred_params[param] - true_params[param]
-                     )**2)
-                row[f'{param} RMSE'] = rmse
+    # Define parameter order ensuring ds comes after logc if present
+    param_order: List[str] = ['logc']
+    if param_data['ds']['present']:
+        param_order.append('ds')
+    param_order.extend(['m', 'noise_std'])
 
-        rows.append(row)
+    # Add columns for each parameter in the defined order
+    for param_name in param_order:
+        # Skip ds if not present
+        if param_name == 'ds' and not param_data[param_name]['present']:
+            continue
 
-    # Create DataFrame from rows
-    df = pd.DataFrame(rows)
+        # Add columns for this parameter
+        data[f'{param_name} (True)'] = param_data[param_name]['true']
+        data[f'{param_name} (Inferred)'] = param_data[param_name]['inferred']
+        data[f'{param_name} (Std)'] = param_data[param_name]['std']
+        data[f'{param_name} (Error)'] = param_data[param_name]['error']
+        data[f'{param_name} (% Error)'] = param_data[param_name]['rel_error']
 
-    # Calculate average metrics row
-    if len(rows) > 0:
-        avg_row = {'Component': 'Average'}
-
-        # Find columns with MAPE and RMSE
-        mape_cols = [col for col in df.columns if 'MAPE' in col]
-        rmse_cols = [col for col in df.columns if 'RMSE' in col]
-
-        # Calculate averages
-        for col in mape_cols + rmse_cols:
-            avg_row[col] = df[col].mean()
-
-        # Append average row
-        df = pd.concat([df, pd.DataFrame([avg_row])], ignore_index=True)
-
-    return df
+    return pd.DataFrame(data)
 
 
-def format_comparison_table(
-        df: pd.DataFrame,
-        precision: int = 4,
-        include_avg_row: bool = True,
-        style: Optional[str] = None) -> pd.DataFrame:
+def format_comparison_table(df: pd.DataFrame, precision: int = 4
+                            ) -> pd.DataFrame:
     """
-    Format a comparison table for display or export.
+    Format the comparison table for better presentation.
 
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame with comparison metrics
+        DataFrame from calculate_component_metrics
     precision : int, optional
-        Number of decimal places for displaying values
-    include_avg_row : bool, optional
-        Whether to include average metrics row
-    style : str, optional
-        Styling format ('latex', 'html', None)
+        Decimal precision for floating point values
 
     Returns
     -------
     pd.DataFrame
-        Formatted DataFrame ready for display or export
+        Formatted DataFrame
     """
-    # Make a copy to avoid modifying the original
+    # Create a copy to avoid modifying the original
     formatted_df = df.copy()
 
-    # Remove average row if not requested
-    if not include_avg_row and 'Average' in formatted_df['Component'].values:
-        formatted_df = formatted_df[formatted_df['Component'] != 'Average']
+    # Determine which parameters exist in this DataFrame
+    param_prefixes = ['logC']
+    if 'ds (True)' in df.columns:
+        param_prefixes.append('ds')
+    param_prefixes.extend(['m', 'Noise'])
 
-    # Set display precision
-    pd.set_option('display.precision', precision)
+    # Format each group of columns
+    for prefix in param_prefixes:
+        # Format basic values to specified precision
+        if f"{prefix} (True)" in formatted_df.columns:
+            formatted_df[f"{prefix} (True)"] = formatted_df[
+                f"{prefix} (True)"].map(
+                lambda x: f"{x:.{precision}f}" if pd.notnull(x) else "-")
 
-    # Apply styling if requested
-    if style == 'latex':
-        return formatted_df.style.format(precision=precision).to_latex()
-    elif style == 'html':
-        return formatted_df.style.format(precision=precision).to_html()
-    else:
-        return formatted_df
+        if f"{prefix} (Inferred)" in formatted_df.columns:
+            formatted_df[f"{prefix} (Inferred)"] = formatted_df[
+                f"{prefix} (Inferred)"].map(
+                lambda x: f"{x:.{precision}f}" if pd.notnull(x) else "-")
 
+        if f"{prefix} (Std)" in formatted_df.columns:
+            formatted_df[f"{prefix} (Std)"] = formatted_df[
+                f"{prefix} (Std)"].map(
+                lambda x: f"{x:.{precision}f}" if pd.notnull(x) else "-")
 
-def save_results_table(
-        df: pd.DataFrame,
-        filename: str,
-        output_dir: Optional[str] = None,
-        format: str = 'csv') -> str:
-    """
-    Save a results table to a file.
+        # Format error with sign indicator
+        if f"{prefix} (Error)" in formatted_df.columns:
+            formatted_df[
+                f"{prefix} (Error)"] = formatted_df[f"{prefix} (Error)"].map(
+                lambda x: f"+{x:.{precision}f}" if pd.notnull(x) and x > 0 else
+                (f"{x:.{precision}f}" if pd.notnull(x) else "-"))
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame to save
-    filename : str
-        Name of the output file
-    output_dir : str, optional
-        Output directory, if None, uses project's 'outputs' directory
-    format : str, optional
-        Output format ('csv', 'excel', 'tex', 'html', 'markdown')
+        # Format percentage with sign and percentage symbol
+        if f"{prefix} (% Error)" in formatted_df.columns:
+            formatted_df[
+                f"{prefix} (% Error)"] = formatted_df[f"{prefix} (% Error)"
+                                                      ].map(
+                lambda x: f"+{x:.{precision}f}%" if pd.notnull(x) and x > 0
+                else (f"{x:.{precision}f}%" if pd.notnull(x) else "-"))
 
-    Returns
-    -------
-    str
-        Path to the saved file
-    """
-    # Set default output directory if not provided
-    if output_dir is None:
-        root_dir = Path(__file__).resolve().parents[1]
-        output_dir = root_dir / "outputs"
-    else:
-        output_dir = Path(output_dir)
+    # Format component column as integer if it contains numeric values
+    if all(isinstance(x, (int, float)) for x in formatted_df['Component']):
+        formatted_df['Component'] = formatted_df['Component'].map(
+            lambda x: f"{int(x)+1}")
 
-    # Create directory if it doesn't exist
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Add file extension if not included
-    if '.' not in filename:
-        if format == 'csv':
-            filename += '.csv'
-        elif format == 'excel':
-            filename += '.xlsx'
-        elif format == 'latex':
-            filename += '.tex'
-        elif format == 'html':
-            filename += '.html'
-        elif format == 'markdown':
-            filename += '.md'
-
-    # Create full path
-    filepath = output_dir / filename
-
-    # Save based on format
-    if format == 'csv':
-        df.to_csv(filepath, index=False)
-    elif format == 'excel':
-        df.to_excel(filepath, index=False)
-    elif format == 'tex':
-        with open(filepath, 'w') as f:
-            f.write(df.to_latex(index=False))
-    elif format == 'html':
-        with open(filepath, 'w') as f:
-            f.write(df.to_html(index=False))
-    elif format == 'markdown':
-        with open(filepath, 'w') as f:
-            f.write(df.to_markdown(index=False))
-    else:
-        raise ValueError(f"Unsupported output format: {format}")
-
-    return str(filepath)
-
-
-def calculate_prediction_metrics(
-        true_values: np.ndarray,
-        predicted_values: np.ndarray) -> Dict[str, float]:
-    """
-    Calculate metrics for comparing predictions with true values.
-
-    Parameters
-    ----------
-    true_values : np.ndarray
-        Array of true values
-    predicted_values : np.ndarray
-        Array of predicted values
-
-    Returns
-    -------
-    Dict[str, float]
-        Dictionary of metrics
-    """
-    # Ensure arrays have the same shape
-    if true_values.shape != predicted_values.shape:
-        raise ValueError("true_values and predicted_values \
-                         must have the same shape")
-
-    # Calculate metrics
-    mse = np.mean((predicted_values - true_values)**2)
-    rmse = np.sqrt(mse)
-    mae = np.mean(np.abs(predicted_values - true_values))
-
-    # Calculate MAPE avoiding division by zero
-    nonzero_mask = true_values != 0
-    if np.any(nonzero_mask):
-        mape = 100 * np.mean(np.abs((true_values[nonzero_mask] -
-                                    predicted_values[nonzero_mask]) /
-                                    true_values[nonzero_mask]))
-    else:
-        mape = np.nan
-
-    # Calculate R-squared
-    ss_total = np.sum((true_values - np.mean(true_values))**2)
-    ss_residual = np.sum((true_values - predicted_values)**2)
-    r_squared = 1 - (ss_residual / ss_total) if ss_total != 0 else np.nan
-
-    return {
-        'mse': mse,
-        'rmse': rmse,
-        'mae': mae,
-        'mape': mape,
-        'r_squared': r_squared
-    }
+    return formatted_df
 
 
 def summarize_posterior(
@@ -404,3 +326,96 @@ def summarize_posterior(
         results.append(row)
 
     return pd.DataFrame(results)
+
+
+def save_results_table(df, filename_prefix='results', output_dir=None):
+    """
+    Save the results table to a CSV file with timestamp.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame to save
+    filename_prefix : str, optional
+        Prefix for the filename
+    output_dir : str or Path, optional
+        Directory to save the file. If None, uses project's results directory.
+
+    Returns
+    -------
+    str
+        Path to the saved file
+    """
+    if output_dir is None:
+        # Get the project root directory (two levels up from this file)
+        output_dir = Path(__file__).resolve().parents[1] / 'results'
+    else:
+        output_dir = Path(output_dir)
+
+    # Create the directory if it doesn't exist
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create filename with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"{filename_prefix}_{timestamp}.csv"
+    file_path = output_dir / filename
+
+    # Save to file
+    df.to_csv(file_path, index=False)
+
+    return str(file_path)
+
+
+def calculate_prediction_metrics(
+        observed: np.ndarray,
+        predicted: np.ndarray) -> Dict[str, float]:
+    """
+    Calculate various error metrics between observed and predicted values.
+
+    Parameters
+    ----------
+    observed : array-like
+        Observed (true) values
+    predicted : array-like
+        Predicted values
+
+    Returns
+    -------
+    dict
+        Dictionary containing various error metrics:
+        - 'rmse': Root Mean Squared Error
+        - 'mae': Mean Absolute Error
+        - 'r_squared': R-squared coefficient of determination
+        - 'mape': Mean Absolute Percentage Error
+    """
+    from sklearn.metrics import (
+        mean_squared_error,
+        mean_absolute_error,
+        r2_score
+    )
+
+    # Convert to numpy arrays
+    observed = np.array(observed)
+    predicted = np.array(predicted)
+
+    # Calculate basic metrics
+    rmse = np.sqrt(mean_squared_error(observed, predicted))
+    mae = mean_absolute_error(observed, predicted)
+    r_squared = r2_score(observed, predicted)
+
+    # Calculate Mean Absolute Percentage Error (MAPE)
+    # Avoid division by zero
+    mask = observed != 0
+    if np.any(mask):
+        mape = np.mean(np.abs(
+            (observed[mask] - predicted[mask]) / observed[mask]
+        )) * 100
+    else:
+        mape = np.nan
+
+    return {
+        'rmse': rmse,
+        'mae': mae,
+        'r_squared': r_squared,
+        'mape': mape
+    }
