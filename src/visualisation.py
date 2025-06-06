@@ -1519,7 +1519,8 @@ def plot_prior_posterior_comparison(
             valid_mask = prior_density > 1e-10
             if np.any(valid_mask):
                 ax.plot(x_range[valid_mask], prior_density[valid_mask],
-                        'b--', linewidth=2, alpha=0.7, label='Prior')
+                        color='coral', linestyle='dashed', linewidth=1.5,
+                        label='Prior')
         except Exception as e:
             print(f"Warning: Could not plot prior for {var}: {e}")
 
