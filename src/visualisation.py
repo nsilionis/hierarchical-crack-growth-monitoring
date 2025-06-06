@@ -284,7 +284,8 @@ def plot_stress_ranges(stress_ranges, save_fig_name=None):
 
 def plot_paris_predictions(paris_params, ds, navg, a0, times,
                            save_fig_name=None, figsize=(6, 4),
-                           plot_individual=True, plot_grid=True):
+                           plot_individual=True, plot_grid=True,
+                           cmap_name='tab20c'):
     """
     Plot detailed Paris law predictions with various visualization options.
 
@@ -308,6 +309,8 @@ def plot_paris_predictions(paris_params, ds, navg, a0, times,
         Whether to plot individual curves
     plot_grid : bool, optional
         Whether to show grid lines
+    cmap_name : str, optional
+        Name of colormap to use for individual curves
 
     Returns
     -------
@@ -360,13 +363,15 @@ def plot_paris_predictions(paris_params, ds, navg, a0, times,
     # Create figure and plot results
     fig, ax = plt.subplots(figsize=figsize)
     # Set colormap
-    cmap = plt.get_cmap('tab20c')
+    cmap = plt.get_cmap(cmap_name)
     # Plot each prediction
     for i in range(len(crack_lengths)):
         t_arr = time_array[i] if len(times.shape) > 1 else times
         ax.plot(t_arr, crack_lengths[i], color=cmap(i),
                 label=f"$\\alpha_{{{i+1}}}$")
-
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    ax.tick_params(which='both', direction='in', top=False, right=False)
     # Set labels and title
     ax.set_xlabel("Time (years)")
     ax.set_ylabel("Crack Length (mm)")
@@ -377,7 +382,7 @@ def plot_paris_predictions(paris_params, ds, navg, a0, times,
     ax.set_ylim(bottom=0, top=160)
     # Add grid if requested
     if plot_grid:
-        ax.grid(True, linestyle='--', alpha=0.4)
+        ax.grid(True, linestyle='--', alpha=0.25)
 
     # Add legend
     # Add legend in horizontal format at bottom left
@@ -476,6 +481,8 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
         )
         axes[0].plot(times, cl, color=cmap(i), label=f"$\\ln C = \
                      {{{np.log(c):.2f}}}$")
+    axes[0].xaxis.set_minor_locator(AutoMinorLocator())
+    axes[0].yaxis.set_minor_locator(AutoMinorLocator())
     axes[0].set_xlabel("Time (years)")
     axes[0].set_ylabel("Crack Length (mm)")
     axes[0].set_title("Effect of rate parameter $C$")
@@ -493,6 +500,8 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
             times=times
         )
         axes[1].plot(times, cl, color=cmap(i), label=f"$m = {m:.2f}$")
+    axes[1].xaxis.set_minor_locator(AutoMinorLocator())
+    axes[1].yaxis.set_minor_locator(AutoMinorLocator())
     axes[1].set_xlabel("Time (years)")
     axes[1].set_xlim(left=0)
     axes[1].set_ylim(bottom=0, top=160)
@@ -511,6 +520,8 @@ def plot_parameter_sensitivity(base_c, base_m, base_ds, base_navg,
             times=times
         )
         axes[2].plot(times, cl, color=cmap(i), label=f"$\\Delta S = {ds:.2f}$")
+    axes[2].xaxis.set_minor_locator(AutoMinorLocator())
+    axes[2].yaxis.set_minor_locator(AutoMinorLocator())
     axes[2].set_xlabel("Time (years)")
     axes[2].set_xlim(left=0)
     axes[2].set_ylim(bottom=0, top=160)
