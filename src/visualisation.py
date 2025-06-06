@@ -1222,7 +1222,7 @@ def plot_posterior_trace(
 
     idata = az.from_dict(posterior=samples)
     axes = az.plot_trace(idata, var_names=var_names,
-                         backend=backend, compact=True)
+                         backend=backend, compact=compact)
 
     # Access and modify the axes if they exist
     if axes is not None and len(axes) > 0:
@@ -1592,11 +1592,11 @@ def plot_prior_posterior_comparison(
 def plot_posterior_predictive_stl(posterior_predictions, true_times,
                                   true_crack_lengths, observed_times,
                                   observed_crack_lengths, max_samples=50,
-                                  figsize=(6.4, 4.8), save_fig_name=None,
-                                  plot_type="predictions"):
+                                  figsize=(12, 5), save_fig_name=None):
     """
-    Plot posterior predictive samples for crack growth
-    with observed data points.
+    Plot posterior predictive samples for crack growth with observed data
+    points in a 2-column subplot format showing both predictions and
+    observations.
 
     Parameters
     ----------
@@ -1616,95 +1616,120 @@ def plot_posterior_predictive_stl(posterior_predictions, true_times,
     max_samples : int, optional
         Maximum number of posterior samples to plot (for visual clarity)
     figsize : tuple, optional
-        Figure size as (width, height) in inches
+        Figure size as (width, height) in inches.
+        Default (12, 5) for 2-column layout
     save_fig_name : str, optional
         If provided, the figure will be saved with this name
-    plot_type : str, optional
-        What to plot from posterior predictive samples:
-        - "predictions": Plot the predicted crack lengths (default)
-        - "observations": Plot the posterior predictive observations
 
     Returns
     -------
     fig : matplotlib.figure.Figure
         The figure object
-    ax : matplotlib.axes.Axes
-        The axes object
+    axes : numpy.ndarray
+        Array of matplotlib axes objects (length 2)
     stats : dict
-        Dictionary of computed statistics for further analysis
+        Dictionary of computed statistics for both predictions and observations
     """
     import numpy as np
 
-    # Create figure and axes
-    fig, ax = plt.subplots(figsize=figsize)
+    # Create figure with 2 subplots (1 row, 2 columns)
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    # Extract data based on plot_type
-    if plot_type == "observations" and "obs" in posterior_predictions:
-        # Plot posterior predicted observations
-        samples = posterior_predictions['obs']
-        samples_mean = np.mean(samples, axis=0)
-        lower_ci = np.percentile(samples, 2.5, axis=0)
-        upper_ci = np.percentile(samples, 97.5, axis=0)
+    # Initialize statistics dictionary
+    stats = {}
 
-        # Plot individual observation trajectories
-        for i in range(min(max_samples, samples.shape[0])):
-            ax.plot(observed_times, samples[i], color='thistle',
-                    alpha=0.3, zorder=1)
+    # Define subplot titles and data configurations
+    plot_configs = [
+        {
+            'title': 'Posterior Predictions',
+            'data_key': 'predicted_crack_lengths',
+            'colors': {
+                'samples': 'lavender',
+                'ci': 'royalblue',
+                'mean': 'royalblue',
+                'mean_label': 'Posterior Mean'
+            }
+        },
+        {
+            'title': 'Posterior Observations',
+            'data_key': 'obs',
+            'colors': {
+                'samples': 'thistle',
+                'ci': 'darkslateblue',
+                'mean': 'mediumslateblue',
+                'mean_label': 'Posterior Mean'
+            }
+        }
+    ]
 
-        # Add credible interval for observations
-        ax.fill_between(observed_times, lower_ci, upper_ci,
-                        color='darkslateblue', alpha=0.15,
-                        label=r'95\% Credible Interval', zorder=2)
+    # Plot each subplot
+    for subplot_idx, config in enumerate(plot_configs):
+        ax = axes[subplot_idx]
+        data_key = config['data_key']
+        colors = config['colors']
 
-        # Plot mean of observations
-        ax.plot(observed_times, samples_mean, color='mediumslateblue',
-                linewidth=1.5, linestyle="dashdot",
-                label='Posterior Mean', zorder=4)
-    else:
-        # Default to plotting predicted crack lengths
-        samples = posterior_predictions['predicted_crack_lengths']
-        samples_mean = np.mean(samples, axis=0)
-        lower_ci = np.percentile(samples, 2.5, axis=0)
-        upper_ci = np.percentile(samples, 97.5, axis=0)
+        # Check if data exists for this plot type
+        if data_key in posterior_predictions:
+            samples = posterior_predictions[data_key]
+            samples_mean = np.mean(samples, axis=0)
+            lower_ci = np.percentile(samples, 2.5, axis=0)
+            upper_ci = np.percentile(samples, 97.5, axis=0)
 
-        # Plot individual trajectories
-        for i in range(min(max_samples, samples.shape[0])):
-            ax.plot(observed_times, samples[i], color='lavender',
-                    alpha=0.4, zorder=1)
+            # Plot individual sample trajectories
+            for i in range(min(max_samples, samples.shape[0])):
+                ax.plot(observed_times, samples[i], color=colors['samples'],
+                        alpha=0.3, zorder=1)
 
-        # Add credible interval
-        ax.fill_between(observed_times, lower_ci, upper_ci, color='royalblue',
-                        alpha=0.15, label=r'95\% Credible Interval', zorder=2)
+            # Add credible interval
+            ax.fill_between(observed_times, lower_ci, upper_ci,
+                            color=colors['ci'], alpha=0.15,
+                            label=r'95\% Credible Interval', zorder=2)
 
-        # Plot posterior predictive mean
-        ax.plot(observed_times, samples_mean, color='royalblue', linewidth=1.5,
-                linestyle="dashdot", label='Posterior Mean', zorder=4)
+            # Plot posterior mean
+            ax.plot(observed_times, samples_mean, color=colors['mean'],
+                    linewidth=1.5, linestyle="dashdot",
+                    label=colors['mean_label'], zorder=4)
 
-    # Plot the true trajectory
-    ax.plot(true_times, true_crack_lengths, 'darkorange', linewidth=1.5,
-            label='True trajectory', zorder=3)
+            # Calculate RMSE for this subplot
+            rmse = np.sqrt(np.mean((samples_mean - observed_crack_lengths)**2))
 
-    # Plot the observations
-    ax.scatter(observed_times, observed_crack_lengths, color='coral', s=40,
-               label='Observations', zorder=5, edgecolors='white',
-               linewidths=1)
+            # Store statistics
+            stats[f'{data_key}_rmse'] = rmse
+            stats[f'{data_key}_mean'] = samples_mean
+            stats[f'{data_key}_lower_ci'] = lower_ci
+            stats[f'{data_key}_upper_ci'] = upper_ci
+            stats[f'{data_key}_ci_width'] = upper_ci - lower_ci
 
-    # Set labels and title
-    ax.set_xlabel('Time (years)', fontsize=12)
-    ax.set_ylabel('Crack length (mm)', fontsize=12)
+        else:
+            # If data doesn't exist, show message
+            ax.text(0.5, 0.5, f'No {data_key} data available',
+                    transform=ax.transAxes, ha='center', va='center',
+                    fontsize=12, color='gray')
 
-    # Set grid, limits, and legend
-    ax.grid(True, linestyle='--', alpha=0.2)
-    ax.set_xlim(left=0)
-    ax.set_ylim(bottom=min(true_crack_lengths)*0.95)
-    ax.legend(fontsize=10, frameon=True, framealpha=0.2)
+        # Plot the true trajectory on both subplots
+        ax.plot(true_times, true_crack_lengths, 'darkorange', linewidth=1.5,
+                label='True trajectory', zorder=3)
 
-    # Add minor ticks
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
+        # Plot the observations on both subplots
+        ax.scatter(observed_times, observed_crack_lengths, color='coral',
+                   s=40, label='Observations', zorder=5, edgecolors='white',
+                   linewidths=1)
 
-    # Calculate RMSE
-    rmse = np.sqrt(np.mean((samples_mean - observed_crack_lengths)**2))
+        # Customize each subplot
+        ax.set_xlabel('Time (years)', fontsize=12)
+        ax.set_ylabel('Crack length (mm)', fontsize=12)
+        # Set grid, limits, and legend
+        ax.grid(True, linestyle='--', alpha=0.2)
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=min(true_crack_lengths)*0.95)
+        ax.legend(fontsize=9, frameon=True, framealpha=0.2)
+
+        # Add minor ticks
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
+        ax.yaxis.set_minor_locator(AutoMinorLocator())
+
+    # Adjust layout
+    plt.tight_layout()
 
     # Save figure if filename provided
     if save_fig_name is not None:
@@ -1714,22 +1739,11 @@ def plot_posterior_predictive_stl(posterior_predictions, true_times,
         save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
-            raise FileNotFoundError(f"Directory {save_path.parent} \
-                                    does not exist.")
+            raise FileNotFoundError(f"Directory {save_path.parent} "
+                                    "does not exist.")
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
-    plt.tight_layout()
-
-    # Return computed statistics for additional analysis
-    stats = {
-        "rmse": rmse,
-        "mean_prediction": samples_mean,
-        "lower_ci": lower_ci,
-        "upper_ci": upper_ci,
-        "ci_width": upper_ci - lower_ci
-    }
-
-    return fig, ax, stats
+    return fig, axes, stats
 
 
 def plot_posterior_predictive_mtl(posterior_predictions_list,
