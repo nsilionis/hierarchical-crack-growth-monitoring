@@ -521,6 +521,18 @@ class MTLBayesianModel:
         self.mcmc = None
         self.posterior_samples = None
 
+    def _validate_hyperpriors(self):
+        """
+        Validate that hyperpriors contain required keys
+        for Weibull distribution.
+        """
+        required_keys = {'weibull_concentration', 'weibull_scale'}
+        provided_keys = set(self.hyperpriors.keys())
+
+        if not required_keys.issubset(provided_keys):
+            missing = required_keys - provided_keys
+            raise ValueError(f"Hyperpriors missing required keys: {missing}")
+
     def model(self, component_idx=0, Y=1.12, navg=None):
         """
         Hierarchical Bayesian model for Paris law
@@ -545,17 +557,23 @@ class MTLBayesianModel:
         noise_std = numpyro.sample("noise_std", self.priors["noise_std"])
 
         # Hyperpriors for stress range distribution
-        weibull_concentration = numpyro.sample("weibull_concentration",
-                                               self.hyperpriors[
-                                                    "weibull_concentration"])
-        weibull_scale = numpyro.sample("weibull_scale",
-                                       self.hyperpriors["weibull_scale"])
+        if self.hyperpriors is None:
+            # Simple i.i.d. random effects with fixed prior
+            with numpyro.plate("components", self.n_components):
+                ds = numpyro.sample("ds", self.priors["ds"])
+        else:
+            weibull_concentration = numpyro.sample("weibull_concentration",
+                                                   self.hyperpriors[
+                                                       "weibull_concentration"]
+                                                   )
+            weibull_scale = numpyro.sample("weibull_scale",
+                                           self.hyperpriors["weibull_scale"])
 
-        # Random effects - component-specific stress ranges
-        with numpyro.plate("components", self.n_components):
-            ds = numpyro.sample("ds",
-                                dist.Weibull(weibull_concentration,
-                                             weibull_scale))
+            # Random effects - component-specific stress ranges
+            with numpyro.plate("components", self.n_components):
+                ds = numpyro.sample("ds",
+                                    dist.Weibull(weibull_concentration,
+                                                 weibull_scale))
 
         # Default navg if not provided
         if navg is None:
