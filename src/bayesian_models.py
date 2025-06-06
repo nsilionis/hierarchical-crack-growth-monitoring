@@ -5,6 +5,7 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS, Predictive
 import arviz as az
 from typing import Dict, Optional, Any
+import warnings
 from src.crack_growth_models import ParisErdogan
 
 
@@ -212,6 +213,11 @@ class STLBayesianModel:
         """
         Generate posterior predictions for crack growth.
 
+        .. deprecated::
+            This method is deprecated and will be removed in a future version.
+            Use `generate_posterior_predictive` instead for proper posterior
+            predictive sampling with NumPyro's Predictive class.
+
         Parameters
         ----------
         num_samples : int, optional
@@ -230,6 +236,15 @@ class STLBayesianModel:
         dict
             Dictionary of predictions
         """
+        warnings.warn(
+            "generate_predictions is deprecated and will be \
+                removed in a future version. "
+            "Use generate_posterior_predictive instead for \
+                proper posterior predictive sampling.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         if self.posterior_samples is None:
             raise ValueError("No posterior samples available. \
                              Please run inference first.")
