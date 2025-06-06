@@ -765,7 +765,12 @@ class MTLBayesianModel:
         flat_samples = {}
         for k, v in self.posterior_samples.items():
             if k != 'predicted_crack_lengths':
-                flat_samples[k] = v.reshape(-1)
+                # For ds parameter, extract only the component of interest
+                if k == 'ds':
+                    flat_samples[k] = v.reshape(-1, self.n_components)[
+                        :, component_idx]
+                else:
+                    flat_samples[k] = v.reshape(-1)
 
         # Select random subset of samples if requested
         n_available = len(flat_samples["logc"])
@@ -783,21 +788,10 @@ class MTLBayesianModel:
             # Prior distributions - will be overridden by the posterior samples
             logc = numpyro.sample("logc", self.priors["logc"])
             m = numpyro.sample("m", self.priors["m"])
+            # Use a dummy prior for ds - will be
+            # overridden by posterior samples
+            ds = numpyro.sample("ds", dist.Gamma(5.0, 0.3))
             noise_std = numpyro.sample("noise_std", self.priors["noise_std"])
-
-            # Hyperpriors
-            weibull_concentration = numpyro.sample("weibull_concentration",
-                                                   self.hyperpriors[
-                                                    "weibull_concentration"]
-                                                   )
-            weibull_scale = numpyro.sample("weibull_scale",
-                                           self.hyperpriors["weibull_scale"])
-
-            # Component-specific stress ranges
-            with numpyro.plate("components", self.n_components):
-                ds = numpyro.sample("ds",
-                                    dist.Weibull(weibull_concentration,
-                                                 weibull_scale))
 
             # Default navg if not provided
             if navg is None:
@@ -814,7 +808,7 @@ class MTLBayesianModel:
             paris = ParisErdogan(
                 logc=logc,
                 m=m,
-                ds=ds[component_idx],  # Use component-specific stress
+                ds=ds,  # Use component-specific stress from posterior
                 navg=navg,
                 a0=init_crack,
                 Y=Y,
