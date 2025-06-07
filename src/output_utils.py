@@ -186,10 +186,12 @@ def create_comparison_summary(
 
 def save_comparison_summary(
     df: pd.DataFrame,
-    filename: str = None
+    filename: str = None,
+    format: str = 'csv'
 ) -> str:
     """
-    Save comparison summary DataFrame to CSV file.
+    Save comparison summary DataFrame to multiple formats optimized
+    for presentations and documents.
 
     Parameters
     ----------
@@ -197,28 +199,99 @@ def save_comparison_summary(
         DataFrame to save
     filename : str, optional
         Custom filename. If None, generates timestamped filename
+    format : str, optional
+        Output format. Options: 'csv', 'excel', 'html' (default 'csv')
 
     Returns
     -------
     str
         Path to saved file
     """
+    # Validate format
+    valid_formats = ['csv', 'excel', 'html']
+    if format not in valid_formats:
+        raise ValueError(f"Format must be one of {valid_formats}")
+
     # Set default output directory
     main_dir = Path(__file__).resolve().parents[1]
     output_dir = main_dir / "outputs"
+    output_dir.mkdir(exist_ok=True)
 
     # Generate filename if not provided
     if filename is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"bayesian_comparison_summary_{timestamp}.csv"
+        base_name = f"bayesian_comparison_summary_{timestamp}"
+    else:
+        # Remove existing extension from custom filename
+        base_name = Path(filename).stem
 
-    # Ensure .csv extension
-    if not filename.endswith('.csv'):
-        filename += '.csv'
+    # Set appropriate extension based on format
+    extensions = {
+        'csv': '.csv',
+        'excel': '.xlsx',
+        'html': '.html'
+    }
 
-    file_path = output_dir / filename
+    filename_with_ext = base_name + extensions[format]
+    file_path = output_dir / filename_with_ext
 
-    # Save DataFrame
-    df.to_csv(file_path, index=False)
+    # Save DataFrame based on format
+    if format == 'csv':
+        df.to_csv(file_path, index=False)
+
+    elif format == 'excel':
+        # Save with formatting for better presentation
+        with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Bayesian_Comparison', index=False)
+            # Get the workbook and worksheet for formatting
+            worksheet = writer.sheets['Bayesian_Comparison']
+            # Auto-adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column = [cell for cell in column]
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except (AttributeError, TypeError):
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[
+                    column[0].column_letter].width = adjusted_width
+
+    elif format == 'html':
+        # Save as HTML with styling for better presentation
+        html_str = df.to_html(
+            index=False,
+            float_format='{:.4f}'.format,
+            table_id='bayesian-comparison',
+            classes='table table-striped table-hover',
+            escape=False
+        )
+        # Add some basic CSS styling
+        styled_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bayesian Inference Comparison Summary</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .table {{ border-collapse: collapse; width: 100%; }}
+        .table th, .table td {{ padding: 8px 12px; text-align: center;
+        border: 1px solid #ddd; }}
+        .table th {{ background-color: #f2f2f2; font-weight: bold; }}
+        .table-striped tbody tr:nth-child(odd) {{ background-color: #f9f9f9; }}
+        .table-hover tbody tr:hover {{ background-color: #e9e9e9; }}
+        h1 {{ color: #333; text-align: center; }}
+    </style>
+</head>
+<body>
+    <h1>Bayesian Inference Comparison Summary</h1>
+    {html_str}
+</body>
+</html>
+"""
+        with open(file_path, 'w') as f:
+            f.write(styled_html)
 
     return str(file_path)
