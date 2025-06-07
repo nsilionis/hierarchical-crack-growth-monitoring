@@ -1197,7 +1197,7 @@ def plot_posterior_trace(
         samples, var_names=None, plot_var_names=None,
         backend="matplotlib", save_fig_name=None,
         compact=False):
-    """
+    """Ok
     Plots the trace and posterior distributions using ArviZ.
 
     Parameters
@@ -1953,3 +1953,282 @@ def plot_posterior_predictive_mtl(posterior_predictions_list,
             plt.savefig(output_path, bbox_inches="tight")
 
     return fig, axes, component_stats
+
+
+def plot_performance_metrics(summary_df, save_fig_name=None,
+                             component_labels=None, parameter_labels=None,
+                             figsize=(12, 8),
+                             show_values=True, colors=None):
+    """
+    Create bar charts showing RMSE and MAPE performance metrics.
+
+    Parameters:
+    -----------
+    summary_df : pd.DataFrame
+        Summary table from create_comparison_summary() with component-parameter
+        columns
+    save_fig_name : str, optional
+        If provided, saves the figure with this filename.
+        If None, does not save the figure.
+    component_labels : dict, optional
+        Dictionary mapping component names to custom display labels.
+        Keys should be component names from the 'Component' column,
+        values should be the desired display labels for the legend.
+        If None, uses original component names as labels.
+    parameter_labels : dict, optional
+        Dictionary mapping parameter names to custom display labels for x-axis.
+        Keys should be parameter names (e.g., 'ds', 'logc', 'm', 'noise_std'),
+        values should be the desired display labels (e.g., LaTeX-formatted).
+        If None, uses original parameter names as labels.
+    figsize : tuple, optional
+        Figure size as (width, height). Default is (12, 8)
+    show_values : bool, optional
+        Whether to show metric values on top of bars. Default is True
+    colors : list or dict, optional
+        Colors for different components. If None, uses default color palette
+
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The created figure
+    axes : tuple
+        Tuple of subplot axes (ax1, ax2)
+
+    Examples:
+    ---------
+    >>> # Basic usage with data from create_comparison_summary()
+    >>> from src.output_utils import create_comparison_summary
+    >>> from src.visualisation import plot_performance_metrics
+    >>>
+    >>> # Assuming you have component_results from Bayesian inference
+    >>> summary_df = create_comparison_summary(component_results)
+    >>> fig, axes = plot_performance_metrics(summary_df)
+    >>>
+    >>> # Save to file with custom settings
+    >>> fig, axes = plot_performance_metrics(
+    ...     summary_df,
+    ...     save_fig_name='performance_comparison.png',
+    ...     figsize=(16, 10),
+    ...     show_values=True
+    ... )
+    >>>
+    >>> # Use custom component labels and colors
+    >>> component_labels = {
+    ...     'Component 1': 'STL Classic',
+    ...     'Component 2': 'STL Spectral',
+    ...     'Component 3': 'MTL Model'
+    ... }
+    >>> custom_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+    >>> fig, axes = plot_performance_metrics(
+    ...     summary_df,
+    ...     component_labels=component_labels,
+    ...     colors=custom_colors,
+    ...     save_fig_name='custom_labeled_metrics.pdf'
+    ... )
+    >>>
+    >>> # Use custom parameter labels with LaTeX formatting
+    >>> parameter_labels = {
+    ...     'ds': '$\\Delta S$',
+    ...     'logc': '$\\ln C$',
+    ...     'm': '$m$',
+    ...     'noise_std': '$\\sigma_{\\text{noise}}$'
+    ... }
+    >>> fig, axes = plot_performance_metrics(
+    ...     summary_df,
+    ...     parameter_labels=parameter_labels,
+    ...     save_fig_name='latex_param_metrics.pdf'
+    ... )
+    >>>
+    >>> # Use both custom component and parameter labels
+    >>> fig, axes = plot_performance_metrics(
+    ...     summary_df,
+    ...     component_labels=component_labels,
+    ...     parameter_labels=parameter_labels,
+    ...     save_fig_name='fully_customized_metrics.pdf'
+    ... )
+    >>>
+    >>> # Use only custom labels without custom colors
+    >>> fig, axes = plot_performance_metrics(
+    ...     summary_df,
+    ...     component_labels=component_labels,
+    ...     save_fig_name='custom_colors_metrics.pdf'
+    ... )
+    >>>
+    >>> # Load saved comparison data and visualize
+    >>> import pandas as pd
+    >>> df = pd.read_csv('outputs/stl_comparison_classic.csv')
+    >>> fig, axes = plot_performance_metrics(df, save_fig_name='metrics.png')
+
+    Notes:
+    ------
+    The function expects a DataFrame with the structure produced by
+    create_comparison_summary(), which includes:
+    - 'Component' column with component names
+    - Parameter-specific columns with '_rmse' and '_mape' suffixes
+    - Common parameters: 'ds', 'logc', 'm', 'noise_std'
+
+    The function automatically detects available parameters from column names
+    and creates grouped bar charts comparing RMSE and MAPE across components.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+
+    # Validate input
+    if not isinstance(summary_df, pd.DataFrame):
+        raise ValueError("summary_df must be a pandas DataFrame")
+
+    # Check for Component column
+    if 'Component' not in summary_df.columns:
+        raise ValueError("Missing required 'Component' column")
+
+    # Extract parameter names from column names
+    # (look for _rmse and _mape suffixes)
+    rmse_columns = [col for col in summary_df.columns
+                    if col.endswith('_rmse')]
+    mape_columns = [col for col in summary_df.columns
+                    if col.endswith('_mape')]
+
+    if not rmse_columns or not mape_columns:
+        raise ValueError("No RMSE or MAPE columns found. Expected columns "
+                         "with '_rmse' and '_mape' suffixes.")
+
+    # Extract parameter names (remove the _rmse/_mape suffix)
+    parameters = sorted(list(set([col[:-5] for col in rmse_columns])))
+    components = summary_df['Component'].tolist()
+
+    # Set up component display labels
+    if component_labels is None:
+        # Use original component names as labels
+        display_labels = {comp: comp for comp in components}
+    elif isinstance(component_labels, dict):
+        # Use provided mapping, fall back to original name if not found
+        display_labels = {comp: component_labels.get(comp, comp)
+                          for comp in components}
+    else:
+        raise ValueError("component_labels must be a dictionary mapping "
+                         "component names to display labels")
+
+    # Set up colors
+    if colors is None:
+        # Use a nice color palette
+        color_palette = plt.cm.Set3(np.linspace(0, 1, len(components)))
+        colors = {comp: color_palette[i] for i, comp in enumerate(components)}
+    elif isinstance(colors, list):
+        if len(colors) < len(components):
+            error_msg = (f"Need at least {len(components)} colors for "
+                         f"{len(components)} components")
+            raise ValueError(error_msg)
+        colors = {comp: colors[i] for i, comp in enumerate(components)}
+
+    # Set up parameter display labels
+    if parameter_labels is None:
+        # Use original parameter names as labels
+        param_display_labels = parameters
+    elif isinstance(parameter_labels, dict):
+        # Use provided mapping, fall back to original name if not found
+        param_display_labels = [parameter_labels.get(param, param)
+                                for param in parameters]
+    else:
+        raise ValueError("parameter_labels must be a dictionary mapping "
+                         "parameter names to display labels")
+
+    # Create subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+    # Set up bar positions
+    x = np.arange(len(parameters))
+    # Total width of 0.8, divided by number of components
+    width = 0.8 / len(components)
+
+    # Plot RMSE
+    for i, component in enumerate(components):
+        rmse_values = []
+        for param in parameters:
+            rmse_col = f'{param}_rmse'
+            if rmse_col in summary_df.columns:
+                # Get the value for this component (row i)
+                rmse_values.append(summary_df.iloc[i][rmse_col])
+            else:
+                rmse_values.append(0)  # or np.nan
+
+        bars1 = ax1.bar(x + i * width - width * (len(components) - 1) / 2,
+                        rmse_values, width,
+                        label=display_labels[component],
+                        color=colors[component],
+                        alpha=0.8)
+
+        # Add value labels on bars
+        if show_values:
+            for bar, value in zip(bars1, rmse_values):
+                if value > 0:  # Only show non-zero values
+                    height = bar.get_height()
+                    ax1.text(bar.get_x() + bar.get_width()/2., height,
+                             f'{value:.3f}',
+                             ha='center', va='bottom', fontsize=9)
+
+    # Plot MAPE
+    for i, component in enumerate(components):
+        mape_values = []
+        for param in parameters:
+            mape_col = f'{param}_mape'
+            if mape_col in summary_df.columns:
+                # Get the value for this component (row i)
+                mape_values.append(summary_df.iloc[i][mape_col])
+            else:
+                mape_values.append(0)  # or np.nan
+
+        bars2 = ax2.bar(x + i * width - width * (len(components) - 1) / 2,
+                        mape_values, width,
+                        label=display_labels[component],
+                        color=colors[component],
+                        alpha=0.8)
+
+        # Add value labels on bars
+        if show_values:
+            for bar, value in zip(bars2, mape_values):
+                if value > 0:  # Only show non-zero values
+                    height = bar.get_height()
+                    ax2.text(bar.get_x() + bar.get_width()/2., height,
+                             f'{value:.2f}%',
+                             ha='center', va='bottom', fontsize=9)
+
+    # Customize RMSE subplot
+    ax1.set_xlabel('Parameters', fontsize=12)
+    ax1.set_ylabel('RMSE', fontsize=12)
+    # ax1.set_title('Root Mean Square Error', fontsize=14, fontweight='bold')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(param_display_labels, rotation=45, ha='right')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3, axis='y')
+
+    # Customize MAPE subplot
+    ax2.set_xlabel('Parameters', fontsize=12)
+    ax2.set_ylabel(r'MAPE (\%)', fontsize=12)
+    # ax2.set_title('Mean Abs. Percentage Error', fontsize=14,
+    #               fontweight='bold')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(param_display_labels, rotation=45, ha='right')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name is not None:
+        main_dir = Path(__file__).resolve().parents[1]
+        output_dir = main_dir / "figures"
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / save_fig_name
+        suffix = output_path.suffix.lower()
+        if suffix in [".png", ".jpg", ".jpeg"]:
+            plt.savefig(output_path, bbox_inches="tight", dpi=300)
+        else:
+            plt.savefig(output_path, bbox_inches="tight")
+
+    # Show the plot
+    plt.show()
+
+    return fig, (ax1, ax2)
