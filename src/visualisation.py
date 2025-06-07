@@ -1770,16 +1770,17 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
     # Adjust layout
     plt.tight_layout()
 
-    # Save figure if requested
-    if save_fig_name:
-        output_dir = Path("figures")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / save_fig_name
-        suffix = output_path.suffix.lower()
-        if suffix in [".png", ".jpg", ".jpeg"]:
-            plt.savefig(output_path, bbox_inches="tight", dpi=300)
-        else:
-            plt.savefig(output_path, bbox_inches="tight")
+    # Save figure if filename provided
+    if save_fig_name is not None:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'figures' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"Directory {save_path.parent} "
+                                    "does not exist.")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig, axes
 
