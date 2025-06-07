@@ -1589,6 +1589,201 @@ def plot_prior_posterior_comparison(
     return fig, axes
 
 
+def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
+                                  plot_var_name=None, figsize=None, n_cols=3,
+                                  point_estimate="mode", kde_kwargs=None,
+                                  save_fig_name=None,
+                                  use_first_chain_only=False):
+    """
+    Plot posterior distributions of random effects (component-specific
+    parameters) as KDEs with target values overlaid as vertical lines.
+
+    This function is designed for hierarchical Bayesian models where random
+    effects vary by component (e.g., stress ranges ds[i] in multi-task
+    learning).
+
+    Parameters
+    ----------
+    posterior_samples : dict
+        Dictionary containing posterior samples from MCMC inference.
+        Should contain param_name as a key with shape (n_samples,
+        n_components).
+    targets : dict
+        Dictionary containing target/true values for each component.
+        Keys should be in the format f"{param_name}[{i}]" (e.g., "ds[0]",
+        "ds[1]").
+    param_name : str, default="ds"
+        Name of the random effect parameter in posterior_samples.
+    plot_var_name : str, optional
+        Display name for the parameter (e.g.,
+        r"$\\Delta S \\ \\mathrm{[MPa]}$"). If None, uses param_name.
+    figsize : tuple, optional
+        Figure size (width, height). If None, automatically determined.
+    n_cols : int, default=3
+        Number of columns in subplot grid.
+    point_estimate : str, default="mode"
+        Type of point estimate to show ("mode", "mean", or "median").
+    kde_kwargs : dict, optional
+        Additional keyword arguments for seaborn.kdeplot.
+    save_fig_name : str, optional
+        Filename to save the figure. If None, figure is not saved.
+    use_first_chain_only : bool, default=False
+        If True, use only the first MCMC chain for plotting.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object.
+    axes : numpy.ndarray
+        Array of subplot axes.
+
+    Examples
+    --------
+    >>> # Plot stress range posteriors with targets
+    >>> targets = {"ds[0]": 16.0, "ds[1]": 22.0, "ds[2]": 19.0}
+    >>> fig, axes = plot_random_effect_posteriors(
+    ...     posterior_samples=mtl_results['samples'],
+    ...     targets=targets,
+    ...     param_name="ds",
+    ...     plot_var_name=r"$\\Delta S \\ \\mathrm{[MPa]}$"
+    ... )
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from scipy import stats
+    from pathlib import Path
+
+    # Extract parameter samples from posterior
+    if param_name not in posterior_samples:
+        raise ValueError(f"Parameter '{param_name}' not found in "
+                         "posterior_samples")
+
+    param_samples = posterior_samples[param_name]
+
+    # Handle chain dimension if present
+    if use_first_chain_only and param_samples.ndim == 3:
+        param_samples = param_samples[0]  # Use first chain only
+    elif param_samples.ndim == 3:
+        # Flatten across chains: (n_chains, n_samples, n_components) ->
+        # (n_chains*n_samples, n_components)
+        n_chains, n_samples, n_components = param_samples.shape
+        param_samples = param_samples.reshape(n_chains * n_samples,
+                                              n_components)
+
+    # Determine number of components
+    if param_samples.ndim != 2:
+        raise ValueError(f"Expected parameter samples to be 2D after "
+                         f"processing, got shape {param_samples.shape}")
+
+    n_samples, n_components = param_samples.shape
+
+    # Set up plotting parameters
+    if plot_var_name is None:
+        plot_var_name = param_name
+
+    if kde_kwargs is None:
+        kde_kwargs = {}
+    # Match styling from plot_prior_posterior_comparison
+    kde_kwargs.setdefault('fill', True)
+    kde_kwargs.setdefault('alpha', 0.2)
+    kde_kwargs.setdefault('linewidth', 1.5)
+    kde_kwargs.setdefault('color', 'royalblue')
+
+    # Calculate subplot layout
+    n_rows = int(np.ceil(n_components / n_cols))
+
+    # Set figure size
+    if figsize is None:
+        width = min(4.0 * n_cols, 16.0)  # Cap at reasonable width
+        height = min(3.0 * n_rows, 12.0)  # Cap at reasonable height
+        figsize = (width, height)
+
+    # Create subplots
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+
+    # Handle single subplot case
+    if n_components == 1:
+        axes = np.array([axes])
+    elif n_rows == 1:
+        axes = axes.reshape(1, -1)
+    elif n_cols == 1:
+        axes = axes.reshape(-1, 1)
+
+    # Flatten axes for easier indexing
+    axes_flat = axes.flatten()
+
+    # Plot each component's posterior
+    for i in range(n_components):
+        ax = axes_flat[i]
+
+        # Get samples for this component
+        component_samples = param_samples[:, i]
+
+        # Create KDE plot
+        sns.kdeplot(component_samples, ax=ax, **kde_kwargs)
+
+        # Add point estimate
+        if point_estimate == "mode":
+            # Estimate mode using KDE
+            kde = stats.gaussian_kde(component_samples)
+            x_range = np.linspace(component_samples.min(),
+                                  component_samples.max(), 1000)
+            kde_values = kde(x_range)
+            mode_value = x_range[np.argmax(kde_values)]
+            ax.axvline(mode_value, color='dodgerblue', linestyle='-.',
+                       linewidth=1.5, label=f'Posterior mode: \
+                        {mode_value:.2f} MPa')
+        elif point_estimate == "mean":
+            mean_value = np.mean(component_samples)
+            ax.axvline(mean_value, color='dodgerblue', linestyle='-.',
+                       linewidth=1.5, label=f'Mean: {mean_value:.2f}')
+        elif point_estimate == "median":
+            median_value = np.median(component_samples)
+            ax.axvline(median_value, color='dodgerblue', linestyle='-.',
+                       linewidth=1.5, label=f'Median: {median_value:.2f} \
+                        MPa')
+
+        # Add target value if available
+        target_key = f"{param_name}[{i}]"
+        if target_key in targets:
+            target_value = targets[target_key]
+            ax.axvline(target_value, color='maroon', linestyle='--',
+                       linewidth=2, label=f'Target: {target_value:.2f} MPa')
+
+        # Set labels and title
+        ax.set_xlabel(plot_var_name)
+        ax.set_ylabel('Density')
+
+        # Match tick formatting from plot_prior_posterior_comparison
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
+        ax.yaxis.set_minor_locator(AutoMinorLocator())
+        ax.tick_params(which='both', direction='in', top=True, right=True)
+
+        # Match legend styling from plot_prior_posterior_comparison
+        ax.legend(frameon=True, framealpha=0.9)
+
+    # Hide unused subplots
+    for i in range(n_components, len(axes_flat)):
+        axes_flat[i].set_visible(False)
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name:
+        output_dir = Path("figures")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / save_fig_name
+        suffix = output_path.suffix.lower()
+        if suffix in [".png", ".jpg", ".jpeg"]:
+            plt.savefig(output_path, bbox_inches="tight", dpi=300)
+        else:
+            plt.savefig(output_path, bbox_inches="tight")
+
+    return fig, axes
+
+
 def plot_posterior_predictive_stl(posterior_predictions, true_times,
                                   true_crack_lengths, observed_times,
                                   observed_crack_lengths, max_samples=50,
