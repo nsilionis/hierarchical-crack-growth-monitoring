@@ -623,9 +623,30 @@ class MTLBayesianModel:
             predicted_crack_lengths_all.append(crack_lengths[1:])
 
         # Store ALL predicted crack lengths for all components
-        # Stack them into a single array: [n_components, n_time_steps]
-        numpyro.deterministic("predicted_crack_lengths",
-                              jnp.stack(predicted_crack_lengths_all))
+        # Handle variable-length time series by padding if necessary
+        if len(predicted_crack_lengths_all) > 0:
+            # Check if all components have the same number of time steps
+            lengths = [len(pred) for pred in predicted_crack_lengths_all]
+            max_length = max(lengths)
+
+            if min(lengths) == max_length:
+                # All components have same length - use direct stacking
+                numpyro.deterministic("predicted_crack_lengths",
+                                      jnp.stack(predicted_crack_lengths_all))
+            else:
+                # Components have different lengths - pad with NaN
+                padded_predictions = []
+                for pred in predicted_crack_lengths_all:
+                    if len(pred) < max_length:
+                        # Pad with NaN values for missing time steps
+                        padding = jnp.full(max_length - len(pred), jnp.nan)
+                        padded_pred = jnp.concatenate([pred, padding])
+                    else:
+                        padded_pred = pred
+                    padded_predictions.append(padded_pred)
+
+                numpyro.deterministic("predicted_crack_lengths",
+                                      jnp.stack(padded_predictions))
 
     def run_inference(self,
                       component_idx: int = 0,
@@ -719,7 +740,153 @@ class MTLBayesianModel:
         if print_summary:
             print(az.summary(inference_data, round_to=3))
 
-        return inference_data
+        return az.summary(inference_data, round_to=3)
+
+    def check_rhat(self,
+                   threshold: float = 1.01,
+                   print_results: bool = True,
+                   return_dict: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Check R-hat convergence diagnostics for MCMC chains.
+
+        The R-hat statistic (also known as the potential scale reduction
+        factor) measures the between- and within-chain variances for each
+        model parameter. Values close to 1.0 indicate good convergence,
+        while values substantially greater than 1.0 suggest that the chains
+        have not yet converged.
+
+        Parameters
+        ----------
+        threshold : float, optional
+            R-hat threshold for convergence assessment (default: 1.01).
+            Common thresholds are:
+            - 1.01 (strict): Recommended for final results
+            - 1.05 (moderate): Acceptable for exploratory analysis
+            - 1.10 (lenient): May indicate convergence issues
+        print_results : bool, optional
+            Whether to print convergence diagnostics to stdout (default: True)
+        return_dict : bool, optional
+            Whether to return a dictionary with convergence statistics
+            (default: False)
+
+        Returns
+        -------
+        dict or None
+            If return_dict=True, returns a dictionary containing:
+            - 'rhat_values': pandas Series of R-hat values for each parameter
+            - 'converged_params': number of parameters below threshold
+            - 'valid_params': number of parameters with valid R-hat values
+            - 'nan_params': number of parameters with NaN R-hat values
+            - 'total_params': total number of parameters
+            - 'max_rhat': maximum R-hat value (excluding NaN)
+            - 'all_converged': boolean indicating if all valid parameters
+              converged
+            - 'threshold': the threshold used for assessment
+            - 'convergence_rate': convergence rate for valid parameters only
+
+        Raises
+        ------
+        ValueError
+            If no MCMC results are available (inference not run yet)
+            If threshold is not a positive number
+
+        Notes
+        -----
+        R-hat values are computed using the rank-normalized split-R-hat as
+        implemented in ArviZ, which is more robust than the traditional R-hat
+        statistic for heavy-tailed distributions.
+
+        References
+        ----------
+        Vehtari, A., Gelman, A., Simpson, D., Carpenter, B., & Bürkner, P. C.
+        (2021). Rank-normalization, folding, and localization: An improved
+        R-hat for assessing convergence of MCMC. Bayesian analysis, 16(2),
+        667-718.
+        """
+        # Input validation
+        if not isinstance(threshold, (int, float)) or threshold <= 0:
+            raise ValueError(
+                f"Threshold must be a positive number, got {threshold}")
+
+        if self.mcmc is None:
+            raise ValueError(
+                "No MCMC results available. Please run inference first.")
+
+        # Get posterior summary with R-hat values
+        try:
+            az_post = self.summarise_posterior(print_summary=False)
+            rhat_values = az_post['r_hat']
+        except KeyError as e:
+            raise ValueError(
+                f"R-hat values not found in posterior summary: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to compute posterior summary: {e}")
+
+        # Compute convergence statistics (excluding NaN values)
+        valid_rhat = rhat_values.dropna()
+        nan_mask = rhat_values.isna()
+        converged_mask = valid_rhat <= threshold
+        n_converged = converged_mask.sum()
+        n_valid = len(valid_rhat)
+        n_nan = nan_mask.sum()
+        n_total = len(rhat_values)
+        max_rhat = valid_rhat.max() if len(valid_rhat) > 0 else float('nan')
+        all_converged = n_converged == n_valid
+
+        if print_results:
+            print("R-hat Convergence Diagnostics:")
+            print("=" * 50)
+            print(f"Threshold: {threshold}")
+            print("-" * 50)
+
+            for param, rhat in rhat_values.items():
+                if rhat != rhat:  # Check for NaN
+                    status = "N/A"
+                    color_code = "(constant/deterministic)"
+                    print(f"{param:<25}: {'NaN':<6} {status} {color_code}")
+                else:
+                    status = "✓" if rhat <= threshold else "⚠"
+                    color_code = "" if rhat <= threshold else "(!)"
+                    print(f"{param:<25}: {rhat:.4f} {status} {color_code}")
+
+            print("\nConvergence Summary:")
+            if n_nan > 0:
+                print(f"Parameters with NaN R-hat: {n_nan} "
+                      "(constant/deterministic)")
+            if n_valid > 0:
+                print(f"Parameters with R-hat ≤ {threshold}: "
+                      f"{n_converged}/{n_valid}")
+                print(f"Convergence rate: {n_converged/n_valid*100:.1f}%")
+                print(f"Max R-hat: {max_rhat:.4f}")
+
+                if all_converged:
+                    print("✅ All variable parameters have converged!")
+                else:
+                    n_not_converged = n_valid - n_converged
+                    print(f"⚠️  {n_not_converged} parameter(s) may not have "
+                          "converged.")
+                    print("Consider running more MCMC samples or checking "
+                          "model specification.")
+            else:
+                print("All parameters have NaN R-hat values "
+                      "(constant/deterministic)")
+
+        # Return dictionary if requested
+        if return_dict:
+            return {
+                'rhat_values': rhat_values,
+                'converged_params': int(n_converged),
+                'valid_params': int(n_valid),
+                'nan_params': int(n_nan),
+                'total_params': int(n_total),
+                'max_rhat': float(max_rhat),
+                'all_converged': bool(all_converged),
+                'threshold': threshold,
+                'convergence_rate': (float(n_converged/n_valid) if n_valid > 0
+                                     else float('nan'))
+            }
+
+        return None
 
     def generate_posterior_predictive(self,
                                       num_samples: int = 1000,
