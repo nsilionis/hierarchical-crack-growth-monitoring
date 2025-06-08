@@ -1144,7 +1144,7 @@ def plot_trajectories_with_observations(times, crack_lengths, obs_times,
             # Plot observations
             ax.scatter(obs_t, obs_cl, color=color, s=marker_size,
                        alpha=obs_alpha, marker='o', edgecolors='white',
-                       linewidths=0.5)
+                       linewidths=1.0, zorder=5)
 
     # Set labels and limits
     ax.set_xlabel(r'Time [years]')
@@ -1593,7 +1593,7 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
                                   plot_var_name=None, figsize=None, n_cols=3,
                                   point_estimate="mode", kde_kwargs=None,
                                   save_fig_name=None,
-                                  use_first_chain_only=False):
+                                  use_first_chain_only=False, priors=None):
     """
     Plot posterior distributions of random effects (component-specific
     parameters) as KDEs with target values overlaid as vertical lines.
@@ -1608,10 +1608,10 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
         Dictionary containing posterior samples from MCMC inference.
         Should contain param_name as a key with shape (n_samples,
         n_components).
-    targets : dict
+    targets : dict or None
         Dictionary containing target/true values for each component.
         Keys should be in the format f"{param_name}[{i}]" (e.g., "ds[0]",
-        "ds[1]").
+        "ds[1]"). If None, no target lines are plotted.
     param_name : str, default="ds"
         Name of the random effect parameter in posterior_samples.
     plot_var_name : str, optional
@@ -1629,6 +1629,11 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
         Filename to save the figure. If None, figure is not saved.
     use_first_chain_only : bool, default=False
         If True, use only the first MCMC chain for plotting.
+    priors : dict, optional
+        Dictionary containing numpyro distribution objects for priors.
+        Keys should be in the format f"{param_name}[{i}]" (e.g., "ds[0]",
+        "ds[1]"). If provided, prior distributions will be plotted alongside
+        posteriors. If None, no priors are plotted.
 
     Returns
     -------
@@ -1644,6 +1649,21 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
     >>> fig, axes = plot_random_effect_posteriors(
     ...     posterior_samples=mtl_results['samples'],
     ...     targets=targets,
+    ...     param_name="ds",
+    ...     plot_var_name=r"$\\Delta S \\ \\mathrm{[MPa]}$"
+    ... )
+
+    >>> # Plot with priors and targets
+    >>> import numpyro.distributions as dist
+    >>> priors = {
+    ...     "ds[0]": dist.Normal(15.0, 3.0),
+    ...     "ds[1]": dist.Normal(20.0, 4.0),
+    ...     "ds[2]": dist.Normal(18.0, 3.5)
+    ... }
+    >>> fig, axes = plot_random_effect_posteriors(
+    ...     posterior_samples=mtl_results['samples'],
+    ...     targets=targets,
+    ...     priors=priors,
     ...     param_name="ds",
     ...     plot_var_name=r"$\\Delta S \\ \\mathrm{[MPa]}$"
     ... )
@@ -1723,6 +1743,40 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
         # Create KDE plot
         sns.kdeplot(component_samples, ax=ax, **kde_kwargs)
 
+        # Add prior distribution if available
+        if priors is not None:
+            prior_key = f"{param_name}[{i}]"
+            if prior_key in priors:
+                prior_dist = priors[prior_key]
+
+                # Determine plotting range based on posterior samples
+                post_min, post_max = component_samples.min(), \
+                    component_samples.max()
+                post_range = post_max - post_min
+                range_extension = 0.5  # 20% extension beyond posterior range
+
+                # Create extended range for prior plotting
+                x_min = post_min - range_extension * post_range
+                x_max = post_max + range_extension * post_range
+                x_range = np.linspace(x_min, x_max, 1000)
+
+                try:
+                    # Evaluate prior log probability and convert to density
+                    log_prob = prior_dist.log_prob(x_range)
+                    log_prob = np.where(np.isfinite(log_prob), log_prob,
+                                        -np.inf)
+                    prior_density = np.exp(log_prob)
+
+                    # Only plot where density is meaningful
+                    valid_mask = prior_density > 1e-10
+                    if np.any(valid_mask):
+                        ax.plot(x_range[valid_mask], prior_density[valid_mask],
+                                color='coral', linestyle='dashed',
+                                linewidth=1.5, label='Prior')
+                except Exception as e:
+                    print(f"Warning: Could not plot prior for\
+                           {prior_key}: {e}")
+
         # Add point estimate
         if point_estimate == "mode":
             # Estimate mode using KDE
@@ -1745,11 +1799,13 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
                         MPa')
 
         # Add target value if available
-        target_key = f"{param_name}[{i}]"
-        if target_key in targets:
-            target_value = targets[target_key]
-            ax.axvline(target_value, color='maroon', linestyle='--',
-                       linewidth=2, label=f'Target: {target_value:.2f} MPa')
+        if targets is not None:
+            target_key = f"{param_name}[{i}]"
+            if target_key in targets:
+                target_value = targets[target_key]
+                ax.axvline(target_value, color='maroon', linestyle='--',
+                           linewidth=2,
+                           label=f'Target: {target_value:.2f} MPa')
 
         # Set labels and title
         ax.set_xlabel(plot_var_name)
