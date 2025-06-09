@@ -551,12 +551,8 @@ class CrackGrowthPredictor:
 
         Returns
         -------
-        dict
-            Dictionary containing:
-            - 'times': List containing the provided time array [times]
-            - 'crack_lengths': List containing crack lengths at
-              specified times [crack_lengths]
-            - 'stress_periods': Original stress periods for reference
+        crack_lengths : array
+            Predicted crack lengths at the specified time points.
 
         Examples
         --------
@@ -617,11 +613,9 @@ class CrackGrowthPredictor:
             times=times, include_observations=include_observations
         )
 
-        # Return data in consistent list format for compatibility
-        # with CrackObservationGenerator
-        # Convert single arrays to lists (length 1 for single trajectory)
-        return {
-            'times': [times],
-            'crack_lengths': [crack_lengths],
-            'stress_periods': stress_periods
-        }
+        return crack_lengths
+        # return {
+        #     'times': [times],
+        #     'crack_lengths': [crack_lengths],
+        #     'stress_periods': stress_periods
+        # }
