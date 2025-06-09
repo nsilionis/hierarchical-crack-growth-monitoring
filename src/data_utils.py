@@ -331,8 +331,11 @@ class CrackObservationGenerator:
         ----------
         trajectories : Dict[str, Any]
             Dictionary containing crack growth trajectories, typically from
-            TrajectorySelector.extract_trajectories(). The dictionary should
-            have the following structure:
+            TrajectorySelector.extract_trajectories(). For variable stress
+            scenarios, can also accept dictionaries from
+            CrackGrowthPredictor.predict_variable_stress_cracks() - in this
+            case, pass single trajectories as lists of length 1.
+            Expected structure:
             - 'times': List of arrays, one per trajectory,
             containing time points
             - 'crack_lengths': List of arrays, one per trajectory,
@@ -341,6 +344,7 @@ class CrackObservationGenerator:
             - 'paris_m': Array of Paris law m parameters for each trajectory
             - 'initial_crack_length': Array of initial crack
             lengths for each trajectory
+            For variable stress: 'stress_periods' may also be present
         random_seed : int, optional
             Random seed for reproducibility
         """
@@ -360,13 +364,17 @@ class CrackObservationGenerator:
         n_points : int or List[int], optional
             Number of points to sample from each trajectory. If a list,
             must have the same length as the number of trajectories.
+            Note: This parameter is ignored when strategy='variable_stress'.
         strategy : str, optional
-            Sampling strategy: 'uniform' or 'random'
+            Sampling strategy: 'uniform', 'random', or 'variable_stress'
             - 'uniform': Evenly spaced points along the timeline
             - 'random': Randomly sampled points from the timeline
+            - 'variable_stress': Extract observations at stress period
+              boundaries (requires 'stress_periods' in trajectories)
         include_endpoints : bool, optional
             Whether to always include the first
-            and last points of each trajectory
+            and last points of each trajectory.
+            Note: This parameter is ignored when strategy='variable_stress'.
 
         Returns
         -------
@@ -377,74 +385,70 @@ class CrackObservationGenerator:
         times = self.trajectories['times']
         crack_lengths = self.trajectories['crack_lengths']
 
-        # Convert n_points to a list if it's a single integer
-        if isinstance(n_points, int):
-            n_points = [n_points] * len(times)
-        elif len(n_points) != len(times):
-            raise ValueError("If n_points is a list, it must have the same \
-                             length as the number of trajectories")
+        # Handle strategy-specific logic
+        if strategy == 'variable_stress':
+            return self._sample_variable_stress(times, crack_lengths)
+        else:
+            return self._sample_with_n_points(times, crack_lengths,
+                                              n_points, strategy,
+                                              include_endpoints)
+
+    def _sample_variable_stress(self, times, crack_lengths):
+        """
+        Sample trajectories based on variable stress periods.
+
+        Parameters
+        ----------
+        times : np.ndarray or List[np.ndarray]
+            Time array(s) for trajectory/trajectories
+        crack_lengths : np.ndarray or List[np.ndarray]
+            Crack length array(s) for trajectory/trajectories
+
+        Returns
+        -------
+        Dict[str, List[np.ndarray]]
+            Dictionary containing sampled data
+        """
+        if 'stress_periods' not in self.trajectories:
+            raise ValueError("'variable_stress' strategy requires "
+                             "'stress_periods' in trajectories data")
+
+        stress_periods = self.trajectories['stress_periods']
+
+        # Extract observation times from stress periods
+        observation_times = [stress_periods[0][0]]  # Start time
+        for _, end_time, _ in stress_periods:
+            if end_time not in observation_times:
+                observation_times.append(end_time)
+        observation_times = np.array(sorted(observation_times))
+
+        # Handle both single arrays and lists of arrays
+        # Note: predict_variable_stress_cracks() now consistently returns lists
+        if not isinstance(times, list):
+            # Convert to list if it's not already (for backward compatibility)
+            times = [np.asarray(times)]
+            crack_lengths = [np.asarray(crack_lengths)]
 
         sampled_times = []
         sampled_crack_lengths = []
 
-        for i, (time_arr, crack_arr) in enumerate(zip(times, crack_lengths)):
-            num_samples = n_points[i]
+        for time_arr, crack_arr in zip(times, crack_lengths):
+            # Ensure time_arr and crack_arr are numpy arrays
+            time_arr = np.asarray(time_arr)
+            crack_arr = np.asarray(crack_arr)
 
-            # Ensure we don't try to sample more points than available
-            if num_samples > len(time_arr):
-                raise ValueError(f"Cannot sample {num_samples} points \
-                                  from trajectory {i} with only \
-                                    {len(time_arr)} points")
+            # Check if arrays are valid
+            if time_arr.size == 0 or crack_arr.size == 0:
+                raise ValueError("Empty time or crack length array found")
 
-            # Apply the sampling strategy
-            if strategy == 'uniform':
-                # For uniform sampling, we create
-                # indices that are evenly spaced
-                if include_endpoints:
-                    if num_samples > 2:
-                        # Create evenly spaced indices including endpoints
-                        indices = np.linspace(0, len(time_arr) - 1,
-                                              num_samples, dtype=int
-                                              )
-                    else:
-                        # If only 1 or 2 points requested and
-                        # include_endpoints is True, we include the endpoints
-                        indices = np.array(
-                            [0, len(time_arr) - 1][:num_samples]
-                            )
-                else:
-                    # Create evenly spaced indices excluding endpoints
-                    indices = np.linspace(
-                        0, len(time_arr) - 1, num_samples + 2, dtype=int
-                        )[1:-1]
+            # Find indices in the trajectory that correspond to these times
+            indices = []
+            for target_time in observation_times:
+                # Find the closest time point in the trajectory
+                idx = np.argmin(np.abs(time_arr - target_time))
+                indices.append(idx)
 
-            elif strategy == 'random':
-                # For random sampling, we randomly select indices
-                indices = self.rng.choice(
-                    len(time_arr), size=num_samples, replace=False
-                    )
-                indices.sort()  # Sort to maintain chronological order
-
-                # Add endpoints if required
-                if include_endpoints:
-                    if 0 not in indices:
-                        indices = np.append([0], indices)
-                    if len(time_arr) - 1 not in indices:
-                        indices = np.append(indices, [len(time_arr) - 1])
-                    # If we now have too many points, randomly remove some
-                    # (but not endpoints)
-                    if len(indices) > num_samples:
-                        middle_indices = indices[1:-1]
-                        to_remove = len(indices) - num_samples
-                        remove_indices = self.rng.choice(
-                            len(middle_indices), size=to_remove, replace=False
-                            )
-                        # +1 because we skip the first index
-                        indices = np.delete(indices, remove_indices + 1)
-
-            else:
-                raise ValueError(f"Unknown sampling strategy: {strategy}. \
-                                  Use 'uniform' or 'random'.")
+            indices = np.array(indices)
 
             # Sample times and crack lengths
             sampled_times.append(time_arr[indices])
@@ -457,6 +461,152 @@ class CrackObservationGenerator:
             'paris_m': self.trajectories['paris_m'],
             'initial_crack_length': self.trajectories['initial_crack_length']
         }
+
+    def _sample_with_n_points(self, times: List[np.ndarray],
+                              crack_lengths: List[np.ndarray],
+                              n_points: Union[int, List[int]],
+                              strategy: str,
+                              include_endpoints: bool
+                              ) -> Dict[str, List[np.ndarray]]:
+        """
+        Sample trajectories using uniform or random strategies with n_points.
+
+        Parameters
+        ----------
+        times : List[np.ndarray]
+            List of time arrays for each trajectory
+        crack_lengths : List[np.ndarray]
+            List of crack length arrays for each trajectory
+        n_points : Union[int, List[int]]
+            Number of points to sample from each trajectory
+        strategy : str
+            Sampling strategy: 'uniform' or 'random'
+        include_endpoints : bool
+            Whether to always include the first and last points
+
+        Returns
+        -------
+        Dict[str, List[np.ndarray]]
+            Dictionary containing sampled data
+        """
+        # Convert n_points to a list if it's a single integer
+        if isinstance(n_points, int):
+            n_points = [n_points] * len(times)
+        elif len(n_points) != len(times):
+            raise ValueError("If n_points is a list, it must have the same "
+                             "length as the number of trajectories")
+
+        sampled_times = []
+        sampled_crack_lengths = []
+
+        for i, (time_arr, crack_arr) in enumerate(zip(times, crack_lengths)):
+            num_samples = n_points[i]
+
+            # Ensure we don't try to sample more points than available
+            if num_samples > len(time_arr):
+                raise ValueError(f"Cannot sample {num_samples} points "
+                                 f"from trajectory {i} with only "
+                                 f"{len(time_arr)} points")
+
+            # Apply the sampling strategy
+            if strategy == 'uniform':
+                indices = self._get_uniform_indices(time_arr, num_samples,
+                                                    include_endpoints)
+            elif strategy == 'random':
+                indices = self._get_random_indices(time_arr, num_samples,
+                                                   include_endpoints)
+            else:
+                raise ValueError(f"Unknown sampling strategy: {strategy}. "
+                                 "Use 'uniform', 'random', or "
+                                 "'variable_stress'.")
+
+            # Sample times and crack lengths
+            sampled_times.append(time_arr[indices])
+            sampled_crack_lengths.append(crack_arr[indices])
+
+        return {
+            'times': sampled_times,
+            'crack_lengths': sampled_crack_lengths,
+            'paris_c': self.trajectories['paris_c'],
+            'paris_m': self.trajectories['paris_m'],
+            'initial_crack_length': self.trajectories['initial_crack_length']
+        }
+
+    def _get_uniform_indices(self, time_arr: np.ndarray, num_samples: int,
+                             include_endpoints: bool) -> np.ndarray:
+        """
+        Get uniformly spaced indices for sampling.
+
+        Parameters
+        ----------
+        time_arr : np.ndarray
+            Time array for the trajectory
+        num_samples : int
+            Number of samples to extract
+        include_endpoints : bool
+            Whether to include first and last points
+
+        Returns
+        -------
+        np.ndarray
+            Array of indices for sampling
+        """
+        if include_endpoints:
+            if num_samples > 2:
+                # Create evenly spaced indices including endpoints
+                indices = np.linspace(0, len(time_arr) - 1,
+                                      num_samples, dtype=int)
+            else:
+                # If only 1 or 2 points requested and
+                # include_endpoints is True, we include the endpoints
+                indices = np.array([0, len(time_arr) - 1][:num_samples])
+        else:
+            # Create evenly spaced indices excluding endpoints
+            indices = np.linspace(0, len(time_arr) - 1, num_samples + 2,
+                                  dtype=int)[1:-1]
+        return indices
+
+    def _get_random_indices(self, time_arr: np.ndarray, num_samples: int,
+                            include_endpoints: bool) -> np.ndarray:
+        """
+        Get randomly selected indices for sampling.
+
+        Parameters
+        ----------
+        time_arr : np.ndarray
+            Time array for the trajectory
+        num_samples : int
+            Number of samples to extract
+        include_endpoints : bool
+            Whether to include first and last points
+
+        Returns
+        -------
+        np.ndarray
+            Array of indices for sampling
+        """
+        # For random sampling, we randomly select indices
+        indices = self.rng.choice(len(time_arr), size=num_samples,
+                                  replace=False)
+        indices.sort()  # Sort to maintain chronological order
+
+        # Add endpoints if required
+        if include_endpoints:
+            if 0 not in indices:
+                indices = np.append([0], indices)
+            if len(time_arr) - 1 not in indices:
+                indices = np.append(indices, [len(time_arr) - 1])
+            # If we now have too many points, randomly remove some
+            # (but not endpoints)
+            if len(indices) > num_samples:
+                middle_indices = indices[1:-1]
+                to_remove = len(indices) - num_samples
+                remove_indices = self.rng.choice(len(middle_indices),
+                                                 size=to_remove,
+                                                 replace=False)
+                # +1 because we skip the first index
+                indices = np.delete(indices, remove_indices + 1)
+        return indices
 
     def add_observation_noise(self,
                               trajectories: Dict[str, List[np.ndarray]],
@@ -503,7 +653,7 @@ class CrackObservationGenerator:
     def create_observations(self,
                             n_points: Union[int, List[int]] = 10,
                             strategy: str = 'uniform',
-                            std_dev: float = 1.0,
+                            noise_std: float = 1.0,
                             include_endpoints: bool = True,
                             random_seed: Optional[int] = None
                             ) -> Dict[str, List[np.ndarray]]:
@@ -515,8 +665,8 @@ class CrackObservationGenerator:
         n_points : int or List[int], optional
             Number of points to sample from each trajectory
         strategy : str, optional
-            Sampling strategy: 'uniform', 'random', or 'log'
-        std_dev : float, optional
+            Sampling strategy: 'uniform', 'random', or 'variable_stress'
+        noise_std : float, optional
             Standard deviation of the Gaussian noise to add
         include_endpoints : bool, optional
             Whether to always include the first and last points
@@ -538,7 +688,7 @@ class CrackObservationGenerator:
         # Add noise with the specified random seed
         observations = self.add_observation_noise(
             trajectories=sampled,
-            std_dev=std_dev,
+            std_dev=noise_std,
             random_seed=random_seed
         )
 
