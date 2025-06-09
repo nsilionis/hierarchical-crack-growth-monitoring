@@ -1,5 +1,4 @@
 import jax.numpy as jnp
-import numpy as np
 from scipy.integrate import solve_ivp
 from abc import ABC, abstractmethod
 
@@ -355,7 +354,8 @@ class VariableStressParisErdogan(BaseCrackGrowthModel):
                              f"(one per time interval), "
                              f"but got {len(ds_array)}")
 
-        self.ds_array = np.array(ds_array)
+        # Store ds_array directly (don't convert to numpy for JAX compat)
+        self.ds_array = ds_array
 
         # Handle Y factor if provided directly
         if 'Y' in self.params and 'sif_calculator' not in self.params:
@@ -375,24 +375,17 @@ class VariableStressParisErdogan(BaseCrackGrowthModel):
         float
             Stress range for the interval containing the time
         """
-        # Find the index of the time interval
-        if time >= self.t[-1]:
-            # If time is at or beyond the last time point,
-            # use the last stress range
-            return self.ds_array[-1]
-        elif time < self.t[0]:
-            # If time is before the first time point,
-            # use the first stress range
-            return self.ds_array[0]
-        else:
-            # Find the interval index (the largest i where t[i] <= time)
-            idx = np.maximum(0,
-                             np.searchsorted(self.t, time, side='right') - 1)
+        # JAX-compatible implementation using jnp.where and jnp.searchsorted
 
-            # Return the corresponding stress range
-            if idx >= len(self.ds_array):
-                return self.ds_array[-1]
-            return self.ds_array[idx]
+        # Find the interval index using JAX operations
+        # jnp.searchsorted gives us the insertion point
+        idx = jnp.searchsorted(self.t, time, side='right') - 1
+
+        # Clamp the index to valid range [0, len(ds_array)-1]
+        idx = jnp.clip(idx, 0, len(self.ds_array) - 1)
+
+        # Return the corresponding stress range
+        return self.ds_array[idx]
 
     def SIF(self, a, ds=None, time=None):
         """
