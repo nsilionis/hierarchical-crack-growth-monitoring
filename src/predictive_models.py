@@ -518,3 +518,110 @@ class CrackGrowthPredictor:
                 else:
                     failure_times[i] = times[failure_index]
             return failure_times
+
+    def predict_variable_stress_observations(self, stress_periods, logc, m,
+                                             navg, a0,
+                                             include_observations=True,
+                                             time_discretization=50):
+        """
+        Generate crack growth predictions for variable stress with observations
+        at stress period boundaries.
+
+        This method is specifically designed for variable stress scenarios
+        where observations are taken at the end of each stress period, which
+        is a common experimental setup.
+
+        Parameters
+        ----------
+        stress_periods : list of tuples
+            List of (start_time, end_time, stress_level) tuples defining
+            stress periods
+        logc : float or array
+            Natural logarithm of Paris law parameter C
+        m : float or array
+            Paris law exponent
+        navg : float or array
+            Average number of cycles per time unit
+        a0 : float or array
+            Initial crack length
+        include_observations : bool, optional
+            Whether to apply the observation model to the predictions
+        time_discretization : int, optional
+            Number of time points for internal integration (default: 50)
+            Higher values give more accurate results
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - 'observation_times': Times at stress period boundaries
+            - 'crack_lengths': Crack lengths at observation times
+            - 'full_times': Full time array used for integration
+            - 'full_crack_lengths': Full crack length trajectory
+            - 'stress_periods': Original stress periods for reference
+
+        Examples
+        --------
+        >>> predictor = CrackGrowthPredictor(
+        ...     model_class=VariableStressParisErdogan)
+        >>> stress_periods = [(0.0, 0.5, 30.0), (0.5, 1.0, 25.0)]
+        >>> result = predictor.predict_variable_stress_observations(
+        ...     stress_periods=stress_periods,
+        ...     logc=np.log(5e-14), m=3.12, navg=2.8e6, a0=39.0
+        ... )
+        >>> print(result['observation_times'])  # [0.0, 0.5, 1.0]
+        >>> print(result['crack_lengths'])      # [39.0, 55.2, 72.1]
+        """
+        from src.crack_growth_models import VariableStressParisErdogan
+
+        # Validate that we're using a variable stress model
+        if not ('Variable' in self.model_class.__name__ or
+                self.model_class == VariableStressParisErdogan):
+            raise ValueError("This method requires a variable stress model. "
+                             "Use VariableStressParisErdogan or similar.")
+
+        # Extract observation times from stress periods
+        observation_times = [stress_periods[0][0]]  # Start with first time
+        for _, end_time, _ in stress_periods:
+            if end_time not in observation_times:
+                observation_times.append(end_time)
+        observation_times = np.array(sorted(observation_times))
+
+        # Create fine time discretization for accurate integration
+        full_times = np.linspace(observation_times[0], observation_times[-1],
+                                 time_discretization)
+
+        # Convert stress periods to stress array for the fine discretization
+        def convert_stress_periods_to_array(stress_periods, times):
+            ds_array = []
+            for i in range(len(times)-1):
+                t_mid = (times[i] + times[i+1])/2  # midpoint of interval
+                # Find which period contains this time
+                for start, end, stress in stress_periods:
+                    if start <= t_mid < end:
+                        ds_array.append(stress)
+                        break
+                else:
+                    raise ValueError(f"No stress period covers time {t_mid}")
+            return np.array(ds_array)
+
+        ds_array = convert_stress_periods_to_array(stress_periods, full_times)
+
+        # Predict full trajectory
+        full_crack_lengths = self.predict_crack_growth(
+            logc=logc, m=m, ds=ds_array, navg=navg, a0=a0,
+            times=full_times, include_observations=include_observations
+        )
+
+        # Extract observations at stress period boundaries
+        observed_indices = [np.argmin(np.abs(full_times - t))
+                            for t in observation_times]
+        observed_crack_lengths = full_crack_lengths[observed_indices]
+
+        return {
+            'observation_times': observation_times,
+            'crack_lengths': observed_crack_lengths,
+            'full_times': full_times,
+            'full_crack_lengths': full_crack_lengths,
+            'stress_periods': stress_periods
+        }
