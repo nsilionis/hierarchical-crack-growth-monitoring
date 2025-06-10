@@ -1115,7 +1115,8 @@ class MTLBayesianModel:
             times = self.crack_growth_data["times"][component_idx]
 
             # Initial crack length (first observation)
-            init_crack = self.crack_growth_data["crack_lengths"][0]
+            init_crack = self.crack_growth_data[
+                "crack_lengths"][component_idx][0]
 
             # Create Paris-Erdogan model instance
             paris = ParisErdogan(
