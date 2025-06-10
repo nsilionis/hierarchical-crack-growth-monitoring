@@ -82,7 +82,8 @@ class STLBayesianModel:
         data = self.crack_growth_data["noisy_crack_lengths"][component_idx]
 
         # Initial crack length (first observation)
-        init_crack = self.crack_growth_data["crack_lengths"][component_idx][0]
+        init_crack = self.crack_growth_data[
+            "initial_crack_length"][component_idx]
 
         # Create Paris-Erdogan model instance
         paris = ParisErdogan(
@@ -404,7 +405,8 @@ class STLBayesianModel:
         # the initial crack length and times
         times = self.crack_growth_data["times"][component_idx]
         # data = self.crack_growth_data["noisy_crack_lengths"][component_idx]
-        init_crack = self.crack_growth_data["crack_lengths"][component_idx][0]
+        init_crack = self.crack_growth_data["initial_crack_length"][
+            component_idx]
 
         # Create a custom prediction function that
         # manually implements the Paris model
@@ -552,11 +554,12 @@ class STLBayesianModel:
 
             # Extract data for this component
             times = self.crack_growth_data["times"][component_idx]
+            pred_times = jnp.linspace(times.min(), times.max(),
+                                      72)
 
             # Initial crack length (first observation)
-            init_crack = self.crack_growth_data["crack_lengths"
-                                                ][component_idx][0]
-
+            init_crack = self.crack_growth_data[
+                "initial_crack_length"][component_idx]
             # Create Paris-Erdogan model instance
             paris = ParisErdogan(
                 logc=logc,
@@ -565,17 +568,17 @@ class STLBayesianModel:
                 navg=navg,
                 a0=init_crack,
                 Y=Y,
-                t=times
+                t=pred_times
             )
 
             # Initialize array for predicted crack lengths
-            crack_lengths = jnp.zeros(len(times))
+            crack_lengths = jnp.zeros(len(pred_times))
             crack_lengths = crack_lengths.at[0].set(init_crack)
 
             # Generate crack growth trajectory using the Paris-Erdogan model
-            for i in range(1, len(times)):
+            for i in range(1, len(pred_times)):
                 crack_lengths = crack_lengths.at[i].set(
-                    paris.state_eq(crack_lengths[i-1], times[i-1])
+                    paris.state_eq(crack_lengths[i-1], pred_times[i-1])
                 )
 
             # Store deterministic crack growth for plotting
@@ -1113,10 +1116,11 @@ class MTLBayesianModel:
 
             # Extract data for the specified component
             times = self.crack_growth_data["times"][component_idx]
+            pred_times = jnp.linspace(times.min(), times.max(), 72)
 
             # Initial crack length (first observation)
             init_crack = self.crack_growth_data[
-                "crack_lengths"][component_idx][0]
+                "initial_crack_length"][component_idx]
 
             # Create Paris-Erdogan model instance
             paris = ParisErdogan(
@@ -1126,17 +1130,17 @@ class MTLBayesianModel:
                 navg=navg,
                 a0=init_crack,
                 Y=Y,
-                t=times
+                t=pred_times
             )
 
             # Initialize array for predicted crack lengths
-            crack_lengths = jnp.zeros(len(times))
+            crack_lengths = jnp.zeros(len(pred_times))
             crack_lengths = crack_lengths.at[0].set(init_crack)
 
             # Generate crack growth trajectory
-            for i in range(1, len(times)):
+            for i in range(1, len(pred_times)):
                 crack_lengths = crack_lengths.at[i].set(
-                    paris.state_eq(crack_lengths[i-1], times[i-1])
+                    paris.state_eq(crack_lengths[i-1], pred_times[i-1])
                 )
 
             # Store deterministic crack growth for plotting
