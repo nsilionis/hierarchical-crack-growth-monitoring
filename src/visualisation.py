@@ -1929,28 +1929,29 @@ def plot_posterior_predictive_stl(posterior_predictions, true_times,
 
             # Plot individual sample trajectories
             for i in range(min(max_samples, samples.shape[0])):
-                ax.plot(observed_times, samples[i], color=colors['samples'],
+                ax.plot(true_times, samples[i], color=colors['samples'],
                         alpha=0.3, zorder=1)
 
             # Add credible interval
-            ax.fill_between(observed_times, lower_ci, upper_ci,
+            ax.fill_between(true_times, lower_ci, upper_ci,
                             color=colors['ci'], alpha=0.15,
                             label=r'95\% Credible Interval', zorder=2)
 
             # Plot posterior mean
-            ax.plot(observed_times, samples_mean, color=colors['mean'],
+            ax.plot(true_times, samples_mean, color=colors['mean'],
                     linewidth=1.5, linestyle="dashdot",
                     label=colors['mean_label'], zorder=4)
 
             # Calculate RMSE for this subplot
-            rmse = np.sqrt(np.mean((samples_mean - observed_crack_lengths)**2))
+            # rmse = np.sqrt(np.mean((samples_mean -
+            #  observed_crack_lengths)**2))
 
             # Store statistics
-            stats[f'{data_key}_rmse'] = rmse
-            stats[f'{data_key}_mean'] = samples_mean
-            stats[f'{data_key}_lower_ci'] = lower_ci
-            stats[f'{data_key}_upper_ci'] = upper_ci
-            stats[f'{data_key}_ci_width'] = upper_ci - lower_ci
+            # stats[f'{data_key}_rmse'] = rmse
+            # stats[f'{data_key}_mean'] = samples_mean
+            # stats[f'{data_key}_lower_ci'] = lower_ci
+            # stats[f'{data_key}_upper_ci'] = upper_ci
+            # stats[f'{data_key}_ci_width'] = upper_ci - lower_ci
 
         else:
             # If data doesn't exist, show message
@@ -2074,16 +2075,16 @@ def plot_posterior_predictive_mtl(posterior_predictions_list,
         # Plot individual prediction trajectories
         n_plot = min(max_samples, pred_samples.shape[0])
         for i in range(n_plot):
-            ax_pred.plot(observed_times, pred_samples[i], color='lavender',
+            ax_pred.plot(true_times, pred_samples[i], color='lavender',
                          alpha=0.4, zorder=1)
 
         # Plot credible interval
-        ax_pred.fill_between(observed_times, pred_lower, pred_upper,
+        ax_pred.fill_between(true_times, pred_lower, pred_upper,
                              color='royalblue', alpha=0.15,
                              label=r'95\% Credible Interval', zorder=2)
 
         # Plot posterior mean
-        ax_pred.plot(observed_times, pred_mean, color='royalblue',
+        ax_pred.plot(true_times, pred_mean, color='royalblue',
                      linewidth=1.5, linestyle="dashdot",
                      label='Posterior Mean', zorder=4)
 
@@ -2118,16 +2119,16 @@ def plot_posterior_predictive_mtl(posterior_predictions_list,
 
             # Plot individual observation trajectories
             for i in range(n_plot):
-                ax_obs.plot(observed_times, obs_samples[i], color='thistle',
+                ax_obs.plot(true_times, obs_samples[i], color='thistle',
                             alpha=0.3, zorder=1)
 
             # Plot credible interval for observations
-            ax_obs.fill_between(observed_times, obs_lower, obs_upper,
+            ax_obs.fill_between(true_times, obs_lower, obs_upper,
                                 color='darkslateblue', alpha=0.15,
                                 label=r'95\% Credible Interval', zorder=2)
 
             # Plot mean of observations
-            ax_obs.plot(observed_times, obs_mean, color='mediumslateblue',
+            ax_obs.plot(true_times, obs_mean, color='mediumslateblue',
                         linewidth=1.5, linestyle="dashdot",
                         label='Posterior Mean', zorder=4)
         else:
@@ -2135,14 +2136,14 @@ def plot_posterior_predictive_mtl(posterior_predictions_list,
             print(f"Warning: No observation samples for component "
                   f"{comp_idx + 1}, using predictions")
             for i in range(n_plot):
-                ax_obs.plot(observed_times, pred_samples[i], color='thistle',
+                ax_obs.plot(true_times, pred_samples[i], color='thistle',
                             alpha=0.3, zorder=1)
 
-            ax_obs.fill_between(observed_times, pred_lower, pred_upper,
+            ax_obs.fill_between(true_times, pred_lower, pred_upper,
                                 color='darkslateblue', alpha=0.15,
                                 label=r'95% Credible Interval', zorder=2)
 
-            ax_obs.plot(observed_times, pred_mean, color='mediumslateblue',
+            ax_obs.plot(true_times, pred_mean, color='mediumslateblue',
                         linewidth=1.5, linestyle="dashdot",
                         label='Posterior Mean', zorder=4)
 
@@ -2167,25 +2168,26 @@ def plot_posterior_predictive_mtl(posterior_predictions_list,
         ax_obs.xaxis.set_minor_locator(AutoMinorLocator())
         ax_obs.yaxis.set_minor_locator(AutoMinorLocator())
 
-        # Calculate statistics for this component
-        pred_rmse = np.sqrt(np.mean((pred_mean - observed_crack_lengths)**2))
-        component_stats[f"component_{comp_idx + 1}"] = {
-            "predictions_rmse": pred_rmse,
-            "predictions_mean": pred_mean,
-            "predictions_lower_ci": pred_lower,
-            "predictions_upper_ci": pred_upper,
-            "predictions_ci_width": pred_upper - pred_lower
-        }
+        # # Calculate statistics for this component
+        # pred_rmse = np.sqrt(np.mean((pred_mean - observed_crack_lengths)**2))
+        # component_stats[f"component_{comp_idx + 1}"] = {
+        #     "predictions_rmse": pred_rmse,
+        #     "predictions_mean": pred_mean,
+        #     "predictions_lower_ci": pred_lower,
+        #     "predictions_upper_ci": pred_upper,
+        #     "predictions_ci_width": pred_upper - pred_lower
+        # }
 
-        if "obs" in posterior_predictive:
-            obs_rmse = np.sqrt(np.mean((obs_mean - observed_crack_lengths)**2))
-            component_stats[f"component_{comp_idx + 1}"].update({
-                "observations_rmse": obs_rmse,
-                "observations_mean": obs_mean,
-                "observations_lower_ci": obs_lower,
-                "observations_upper_ci": obs_upper,
-                "observations_ci_width": obs_upper - obs_lower
-            })
+        # if "obs" in posterior_predictive:
+        #     obs_rmse = np.sqrt(np.mean((obs_mean -
+        # observed_crack_lengths)**2))
+        #     component_stats[f"component_{comp_idx + 1}"].update({
+        #         "observations_rmse": obs_rmse,
+        #         "observations_mean": obs_mean,
+        #         "observations_lower_ci": obs_lower,
+        #         "observations_upper_ci": obs_upper,
+        #         "observations_ci_width": obs_upper - obs_lower
+        #     })
 
     # Adjust layout
     plt.tight_layout()
