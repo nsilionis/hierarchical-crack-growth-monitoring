@@ -369,7 +369,7 @@ def plot_paris_predictions(paris_params, ds, navg, a0, times,
     for i in range(len(crack_lengths)):
         t_arr = time_array[i] if len(times.shape) > 1 else times
         ax.plot(t_arr, crack_lengths[i], color=cmap(i),
-                label=f"$\\alpha_{{{i+1}}}$")
+                label=f"Component {{{i+1}}}")
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     ax.tick_params(which='both', direction='in', top=False, right=False)
