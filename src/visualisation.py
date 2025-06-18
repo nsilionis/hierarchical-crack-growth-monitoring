@@ -923,114 +923,6 @@ def plot_stress_pattern_comparison(
     return fig, axes
 
 
-def plot_selected_trajectories(times, crack_lengths, labels=None,
-                               cmap_name='Paired', figsize=(8, 6),
-                               alpha=0.8, save_fig_name=None):
-    """
-    Plot selected crack growth trajectories.
-
-    Parameters
-    ----------
-    times : list of arrays or array
-        List of time arrays, one per trajectory, or a single 2D array
-    crack_lengths : list of arrays or array
-        List of crack length arrays, one per trajectory, or a single 2D array
-    labels : list, optional
-        Labels for the trajectories. If None, generates default labels
-    cmap_name : str, optional
-        Name of colormap to use. Default is 'Paired'.
-    figsize : tuple, optional
-        Figure size. Default is (8, 6).
-    alpha : float, optional
-        Transparency of the trajectory lines. Default is 0.8.
-    save_fig_name : str, optional
-        If provided, the figure will be saved with this name.
-
-    Returns
-    -------
-    fig : matplotlib.figure.Figure
-        The figure object
-    ax : matplotlib.axes.Axes
-        The axes object
-    """
-    # Convert to list format if arrays are provided
-    if isinstance(times, np.ndarray) and times.ndim > 1:
-        times_list = [times[i, :] for i in range(times.shape[0])]
-    elif isinstance(times, list):
-        times_list = times
-    else:
-        times_list = [times]
-
-    if isinstance(crack_lengths, np.ndarray) and crack_lengths.ndim > 1:
-        crack_lengths_list = [crack_lengths[i, :]
-                              for i in range(crack_lengths.shape[0])]
-    elif isinstance(crack_lengths, list):
-        crack_lengths_list = crack_lengths
-    else:
-        crack_lengths_list = [crack_lengths]
-
-    # Create default labels if none provided
-    if labels is None:
-        labels = [f"Trajectory {i+1}" for i in range(len(times_list))]
-    elif len(labels) < len(times_list):
-        labels = labels + [f"Trajectory {i+1}"
-                           for i in range(len(labels), len(times_list))]
-
-    # Create figure and axis
-    fig, ax = plt.subplots(figsize=figsize)
-
-    # Get colormap
-    cmap = plt.get_cmap(cmap_name)
-
-    # Plot each trajectory
-    for i, (t, cl, label) in enumerate(
-            zip(times_list, crack_lengths_list, labels)):
-        # Clean data by removing trailing zeros if any
-        non_zero_indices = np.where(cl > 0)[0]
-        if len(non_zero_indices) > 0:
-            last_idx = non_zero_indices[-1] + 1
-            t_clean = t[:last_idx]
-            cl_clean = cl[:last_idx]
-        else:
-            t_clean, cl_clean = t, cl
-
-        ax.plot(t_clean, cl_clean, color=cmap(i % cmap.N), linewidth=2,
-                alpha=alpha, label=label)
-
-    # Set labels and limits
-    ax.set_xlabel(r'Time [years]')
-    ax.set_ylabel(r'Crack length $\alpha$ [mm]')
-    ax.set_xlim(left=0)
-
-    # Add minor ticks
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
-    ax.tick_params(which='both', direction='in', top=True, right=True)
-
-    # Add grid
-    ax.grid(True, linestyle='--', alpha=0.5)
-
-    # Add legend
-    ax.legend(frameon=True, framealpha=0.9)
-
-    # Tight layout
-    plt.tight_layout()
-
-    # Save figure if requested
-    if save_fig_name:
-        # Get the root directory of the project
-        dir_path = Path(__file__).resolve().parents[1]
-        # Create the path to save the figure
-        save_path = dir_path / 'figures' / save_fig_name
-        # Raise an error if the directory does not exist
-        if not save_path.parent.exists():
-            raise FileNotFoundError(f"Directory {save_path.parent} \
-                                     does not exist.")
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-
-    return fig, ax
-
-
 def plot_trajectories_with_observations(times, crack_lengths, obs_times,
                                         obs_lengths, labels=None,
                                         cmap_name='Paired', figsize=(8, 6),
@@ -1644,7 +1536,6 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
 
     Examples
     --------
-    >>> # Plot stress range posteriors with targets
     >>> targets = {"ds[0]": 16.0, "ds[1]": 22.0, "ds[2]": 19.0}
     >>> fig, axes = plot_random_effect_posteriors(
     ...     posterior_samples=mtl_results['samples'],
@@ -1834,8 +1725,8 @@ def plot_random_effect_posteriors(posterior_samples, targets, param_name="ds",
         save_path = dir_path / 'figures' / save_fig_name
         # Raise an error if the directory does not exist
         if not save_path.parent.exists():
-            raise FileNotFoundError(f"Directory {save_path.parent} "
-                                    "does not exist.")
+            raise FileNotFoundError(f"Directory {save_path.parent} \
+                                     does not exist.")
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig, axes
@@ -2486,3 +2377,256 @@ def plot_performance_metrics(summary_df, save_fig_name=None,
     plt.show()
 
     return fig, (ax1, ax2)
+
+
+def plot_posterior_pairplot(posterior_samples, var_names=None,
+                            plot_var_names=None, true_values=None,
+                            figsize=None, use_first_chain_only=False,
+                            diag_kind='kde', corner_kwargs=None,
+                            save_fig_name=None):
+    """
+    Create a pairplot of posterior parameter samples showing correlations
+    and marginal distributions.
+
+    Parameters
+    ----------
+    posterior_samples : dict
+        Dictionary containing posterior samples from MCMC inference.
+        Each parameter should have shape (n_chains, n_samples) or (n_samples,).
+    var_names : list of str, optional
+        List of parameter names to include in the pairplot.
+        If None, uses all parameters in posterior_samples.
+    plot_var_names : dict or list, optional
+        Display names for parameters. If dict, maps var_names to display names.
+        If list, should have same length as var_names.
+        If None, uses original parameter names.
+    true_values : dict, optional
+        Dictionary containing true parameter values to overlay as
+        vertical/horizontal lines. Keys should match var_names.
+    figsize : tuple, optional
+        Figure size (width, height). If None, automatically determined
+        based on number of parameters.
+    use_first_chain_only : bool, default False
+        If True, uses only the first MCMC chain for plotting.
+    diag_kind : str, default 'kde'
+        Type of plot for diagonal elements ('kde', 'hist', or 'auto').
+    corner_kwargs : dict, optional
+        Additional keyword arguments for seaborn PairGrid configuration.
+    save_fig_name : str, optional
+        Filename to save the figure. If None, figure is not saved.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object.
+    grid : seaborn.PairGrid
+        The seaborn PairGrid object.
+
+    Examples
+    --------
+    >>> # Basic pairplot
+    >>> fig, grid = plot_posterior_pairplot(
+    ...     posterior_samples=samples,
+    ...     var_names=['logc', 'm', 'ds', 'noise_std']
+    ... )
+
+    >>> # With custom parameter names and true values
+    >>> plot_var_names = {
+    ...     'logc': r'$\\ln C$',
+    ...     'm': r'$m$',
+    ...     'ds': r'$\\Delta S$ [MPa]',
+    ...     'noise_std': r'$\\sigma_{\\text{noise}}$'
+    ... }
+    >>> true_vals = {'logc': -30.2, 'm': 3.3, 'ds': 18.5, 'noise_std': 0.5}
+    >>> fig, grid = plot_posterior_pairplot(
+    ...     posterior_samples=samples,
+    ...     var_names=['logc', 'm', 'ds', 'noise_std'],
+    ...     plot_var_names=plot_var_names,
+    ...     true_values=true_vals,
+    ...     save_fig_name='parameter_pairplot.pdf'
+    ... )
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import pandas as pd
+    import numpy as np
+    from pathlib import Path
+
+    # Determine which variables to plot
+    if var_names is None:
+        var_names = list(posterior_samples.keys())
+
+    # Handle display names
+    var_display_names = {}
+    if plot_var_names is None:
+        var_display_names = {var: var for var in var_names}
+    elif isinstance(plot_var_names, dict):
+        var_display_names = {var: plot_var_names.get(var, var)
+                             for var in var_names}
+    elif isinstance(plot_var_names, list) and \
+            len(plot_var_names) >= len(var_names):
+        var_display_names = {var: plot_var_names[i]
+                             for i, var in enumerate(var_names)}
+    else:
+        var_display_names = {var: var for var in var_names}
+
+    # Prepare data for plotting
+    plot_data = {}
+    for var in var_names:
+        if var not in posterior_samples:
+            raise ValueError(f"Variable '{var}' not found in "
+                             f"posterior_samples")
+
+        samples = posterior_samples[var]
+
+        # Handle chain dimension if present
+        if use_first_chain_only and samples.ndim > 1:
+            samples = samples[0]  # Take first chain
+        elif samples.ndim > 1:
+            # Flatten all chains
+            samples = samples.reshape(-1)
+
+        plot_data[var_display_names[var]] = samples
+
+    # Create DataFrame
+    df = pd.DataFrame(plot_data)
+
+    # Set figure size if not provided
+    n_vars = len(var_names)
+    if figsize is None:
+        base_size = 2.5
+        figsize = (n_vars * base_size, n_vars * base_size)
+
+    # Set up corner plot kwargs
+    if corner_kwargs is None:
+        corner_kwargs = {}
+
+    corner_kwargs.setdefault('height', figsize[0]/n_vars)
+    corner_kwargs.setdefault('aspect', 1)
+    corner_kwargs.setdefault('diag_sharey', False)
+
+    # Create PairGrid
+    grid = sns.PairGrid(df, **corner_kwargs)
+
+    # Configure diagonal plots (marginals)
+    if diag_kind == 'kde':
+        grid.map_diag(sns.kdeplot, fill=True, color='royalblue',
+                      alpha=0.7, linewidth=1.5)
+    elif diag_kind == 'hist':
+        grid.map_diag(plt.hist, bins=30, color='royalblue',
+                      alpha=0.7, edgecolor='white')
+    else:  # auto
+        grid.map_diag(sns.histplot, kde=True, color='royalblue',
+                      alpha=0.7, edgecolor='white', stat='density')
+
+    # Configure off-diagonal plots (scatter + contours)
+
+    def scatter_with_contour(x, y, **kwargs):
+        ax = plt.gca()
+        # Scatter plot with transparency
+        ax.scatter(x, y, alpha=0.4, s=8, edgecolors='white',
+                   linewidth=0.1, color='royalblue')
+        # Add contour lines
+        try:
+            sns.kdeplot(x=x, y=y, levels=5, colors='darkblue',
+                        alpha=0.6, linewidths=1)
+        except Exception:
+            pass  # Skip contours if KDE fails
+
+    grid.map_lower(scatter_with_contour)
+    grid.map_upper(sns.kdeplot, fill=True, levels=8, alpha=0.3, cmap="Blues")
+
+    # Add correlation coefficients to upper triangle
+    def add_correlation(x, y, **kwargs):
+        ax = plt.gca()
+        corr_coef = np.corrcoef(x, y)[0, 1]
+        ax.text(0.5, 0.5, f'$r = {corr_coef:.3f}$',
+                transform=ax.transAxes, fontsize=12, ha='center',
+                va='center',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                          alpha=0.8, edgecolor='lightgray'))
+
+    # Remove the upper triangle KDE and add correlations instead
+    for i in range(n_vars):
+        for j in range(n_vars):
+            if i < j:  # Upper triangle
+                ax = grid.axes[i, j]
+                ax.clear()
+                var_x = list(df.columns)[j]
+                var_y = list(df.columns)[i]
+                add_correlation(df[var_x], df[var_y])
+                ax.set_xlim(df[var_x].min(), df[var_x].max())
+                ax.set_ylim(df[var_y].min(), df[var_y].max())
+
+    # Add true values if provided
+    if true_values is not None:
+        for i, var in enumerate(var_names):
+            if var in true_values:
+                true_val = true_values[var]
+
+                # Add vertical line to diagonal plot
+                diag_ax = grid.axes[i, i]
+                diag_ax.axvline(true_val, color='red', linestyle='--',
+                                linewidth=2, alpha=0.8, label='True Value')
+
+                # Add lines to off-diagonal plots
+                for j in range(n_vars):
+                    if i != j:
+                        # Vertical line (when var is on x-axis)
+                        if j > i:  # Upper triangle (correlation text)
+                            pass  # Skip upper triangle
+                        else:  # Lower triangle
+                            ax = grid.axes[j, i]
+                            ax.axvline(true_val, color='red',
+                                       linestyle='--', linewidth=1.5,
+                                       alpha=0.6)
+
+                        # Horizontal line (when var is on y-axis)
+                        if i > j:  # Lower triangle
+                            ax = grid.axes[i, j]
+                            ax.axhline(true_val, color='red',
+                                       linestyle='--', linewidth=1.5,
+                                       alpha=0.6)
+
+    # Customize axes
+    for i in range(n_vars):
+        for j in range(n_vars):
+            ax = grid.axes[i, j]
+            ax.tick_params(which='both', direction='in', top=True, right=True)
+
+            # Add minor ticks for diagonal plots
+            if i == j:
+                ax.xaxis.set_minor_locator(AutoMinorLocator())
+                ax.yaxis.set_minor_locator(AutoMinorLocator())
+
+    # Add legend for true values if they exist
+    if true_values is not None:
+        grid.axes[0, 0].legend(loc='upper left', frameon=True, framealpha=0.9)
+
+    # Get figure object
+    fig = grid.fig
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if requested
+    if save_fig_name is not None:
+        # Get the root directory of the project
+        dir_path = Path(__file__).resolve().parents[1]
+        # Create the path to save the figure
+        save_path = dir_path / 'figures' / save_fig_name
+        # Raise an error if the directory does not exist
+        if not save_path.parent.exists():
+            raise FileNotFoundError(f"Directory {save_path.parent} "
+                                    f"does not exist")
+
+        # Determine file format and save with appropriate settings
+        suffix = save_path.suffix.lower()
+        if suffix in [".png", ".jpg", ".jpeg"]:
+            plt.savefig(save_path, bbox_inches="tight", dpi=300)
+        else:
+            plt.savefig(save_path, bbox_inches="tight")
+
+    plt.show()
+
+    return fig, grid
