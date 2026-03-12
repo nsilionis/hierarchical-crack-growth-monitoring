@@ -1,0 +1,22 @@
+[project]
+name = "hierarchical-crack-growth-monitoring"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "arviz>=1.0.0",
+    "diffrax>=0.7.2",
+    "equinox>=0.13.6",
+    "flowjax>=19.1.0",
+    "ipykernel>=7.2.0",
+    "jax>=0.9.1",
+    "jaxlib>=0.9.1",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.3",
+    "numpyro>=0.20.0",
+    "optax>=0.2.7",
+    "pandas>=3.0.1",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
+]
