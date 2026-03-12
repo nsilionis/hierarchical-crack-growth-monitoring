@@ -1112,73 +1112,58 @@ def plot_posterior_trace(
         Set to True for hierarchical models. Default is False.
     """
 
-    idata = az.from_dict(posterior=samples)
-    axes = az.plot_trace(idata, var_names=var_names,
-                         backend=backend, compact=compact)
+    idata = az.from_dict({'posterior': samples})
+    # compact may be passed as a string from notebooks
+    compact_bool = compact if isinstance(compact, bool) else str(compact) == 'True'
+    az.plot_trace_dist(idata, var_names=var_names,
+                       backend=backend, compact=compact_bool)
 
-    # Access and modify the axes if they exist
-    if axes is not None and len(axes) > 0:
-        num_vars = axes.shape[0]
+    # Access and modify the axes via the current figure
+    fig = plt.gcf()
+    axes_flat = fig.get_axes()
 
-        # Create a mapping of variable names to display names
-        var_display_names = {}
-
+    if axes_flat:
         # If var_names is not provided, get all variable names from samples
         actual_var_names = var_names if var_names is not None \
             else list(samples.keys())
 
         # Process plot_var_names based on its type
+        var_display_names = {}
         if plot_var_names is None:
-            # Use the original variable names
             var_display_names = {var: var for var in actual_var_names}
         elif isinstance(plot_var_names, dict):
-            # Use the provided mappings, fall back to original names if missing
             var_display_names = {var: plot_var_names.get(var, var)
                                  for var in actual_var_names}
         elif isinstance(plot_var_names, list) and \
                 len(plot_var_names) >= len(actual_var_names):
-            # Use list items as display names in the same order as var_names
             var_display_names = {var: plot_var_names[i]
                                  for i, var in enumerate(actual_var_names)}
         else:
-            # Fallback to original names if plot_var_names has invalid format
             var_display_names = {var: var for var in actual_var_names}
-            print("Warning: plot_var_names format not recognized.\
-                   Using original variable names.")
+            print("Warning: plot_var_names format not recognized."
+                  " Using original variable names.")
 
-        for i in range(num_vars):
-            # Remove default titles
-            if i < axes.shape[0] and 0 < axes.shape[1]:
-                axes[i, 0].set_title("")
-            if i < axes.shape[0] and 1 < axes.shape[1]:
-                axes[i, 1].set_title("")
+        # plot_trace_dist lays out axes as [dist_0, trace_0, dist_1, trace_1, ...]
+        for i, var_name in enumerate(actual_var_names):
+            if 2 * i + 1 >= len(axes_flat):
+                break
+            display_name = var_display_names.get(var_name, var_name)
+            dist_ax = axes_flat[2 * i]
+            trace_ax = axes_flat[2 * i + 1]
 
-            # Set the labels for the KDE posteriors and trace plots
-            if i < axes.shape[0] and 0 < axes.shape[1]:
-                var_name = actual_var_names[i] if i < len(actual_var_names) \
-                    else f"Parameter {i+1}"
-                display_name = var_display_names.get(var_name, var_name)
+            dist_ax.set_title("")
+            dist_ax.set_xlabel(display_name)
+            dist_ax.set_ylabel("Density")
+            dist_ax.xaxis.set_minor_locator(AutoMinorLocator())
+            dist_ax.yaxis.set_minor_locator(AutoMinorLocator())
+            dist_ax.tick_params(which='both', direction='in', top=True, right=True)
 
-                axes[i, 0].xaxis.set_minor_locator(AutoMinorLocator())
-                axes[i, 0].yaxis.set_minor_locator(AutoMinorLocator())
-                axes[i, 0].tick_params(which='both', direction='in',
-                                       top=True, right=True)
-                axes[i, 0].tick_params(which='both', direction='in',
-                                       top=True, right=True)
-                axes[i, 0].set_ylabel("Density")
-                axes[i, 0].set_xlabel(display_name)
-
-            if i < axes.shape[0] and 1 < axes.shape[1]:
-                var_name = actual_var_names[i] if i < len(actual_var_names) \
-                    else f"Parameter {i+1}"
-                display_name = var_display_names.get(var_name, var_name)
-
-                axes[i, 1].xaxis.set_minor_locator(AutoMinorLocator())
-                axes[i, 1].yaxis.set_minor_locator(AutoMinorLocator())
-                axes[i, 1].tick_params(which='both', direction='in',
-                                       top=True, right=True)
-                axes[i, 1].set_xlabel("MCMC Iteration")
-                axes[i, 1].set_ylabel(display_name)
+            trace_ax.set_title("")
+            trace_ax.set_xlabel("MCMC Iteration")
+            trace_ax.set_ylabel(display_name)
+            trace_ax.xaxis.set_minor_locator(AutoMinorLocator())
+            trace_ax.yaxis.set_minor_locator(AutoMinorLocator())
+            trace_ax.tick_params(which='both', direction='in', top=True, right=True)
 
     plt.tight_layout()
 
