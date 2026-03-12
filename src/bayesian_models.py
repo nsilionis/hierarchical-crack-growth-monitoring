@@ -183,7 +183,7 @@ class STLBayesianModel:
         }
 
     def summarise_posterior(self, print_summary: bool = True
-                            ) -> az.InferenceData:
+                            ) -> None:
         """
         Create a summary of the posterior distribution.
 
@@ -290,7 +290,7 @@ class STLBayesianModel:
             raise RuntimeError(f"Failed to compute posterior summary: {e}")
 
         # Compute convergence statistics (excluding NaN values)
-        valid_rhat = rhat_values.dropna()
+        valid_rhat = rhat_values.dropna().astype(float)
         nan_mask = rhat_values.isna()
         converged_mask = valid_rhat <= threshold
         n_converged = converged_mask.sum()
@@ -312,9 +312,9 @@ class STLBayesianModel:
                     color_code = "(constant/deterministic)"
                     print(f"{param:<25}: {'NaN':<6} {status} {color_code}")
                 else:
-                    status = "✓" if rhat <= threshold else "⚠"
-                    color_code = "" if rhat <= threshold else "(!)"
-                    print(f"{param:<25}: {rhat:.4f} {status} {color_code}")
+                    status = "✓" if float(rhat) <= threshold else "⚠"
+                    color_code = "" if float(rhat) <= threshold else "(!)"
+                    print(f"{param:<25}: {float(rhat):.4f} {status} {color_code}")
 
             print("\nConvergence Summary:")
             if n_nan > 0:
@@ -868,7 +868,7 @@ class MTLBayesianModel:
         }
 
     def summarise_posterior(self, print_summary: bool = True
-                            ) -> az.InferenceData:
+                            ) -> None:
         """
         Create a summary of the posterior distribution.
 
@@ -879,8 +879,7 @@ class MTLBayesianModel:
 
         Returns
         -------
-        arviz.InferenceData
-            ArviZ InferenceData object containing the posterior data
+        None
         """
         if self.mcmc is None:
             raise ValueError("No MCMC results available. \
@@ -975,7 +974,7 @@ class MTLBayesianModel:
             raise RuntimeError(f"Failed to compute posterior summary: {e}")
 
         # Compute convergence statistics (excluding NaN values)
-        valid_rhat = rhat_values.dropna()
+        valid_rhat = rhat_values.dropna().astype(float)
         nan_mask = rhat_values.isna()
         converged_mask = valid_rhat <= threshold
         n_converged = converged_mask.sum()
@@ -997,9 +996,9 @@ class MTLBayesianModel:
                     color_code = "(constant/deterministic)"
                     print(f"{param:<25}: {'NaN':<6} {status} {color_code}")
                 else:
-                    status = "✓" if rhat <= threshold else "⚠"
-                    color_code = "" if rhat <= threshold else "(!)"
-                    print(f"{param:<25}: {rhat:.4f} {status} {color_code}")
+                    status = "✓" if float(rhat) <= threshold else "⚠"
+                    color_code = "" if float(rhat) <= threshold else "(!)"
+                    print(f"{param:<25}: {float(rhat):.4f} {status} {color_code}")
 
             print("\nConvergence Summary:")
             if n_nan > 0:
@@ -1435,7 +1434,7 @@ class VariableStressBayesianModel:
         return self.mcmc_samples
 
     def summarise_posterior(self, print_summary: bool = True
-                            ) -> az.InferenceData:
+                            ) -> None:
         """
         Create a summary of the posterior distribution.
 
@@ -1542,7 +1541,7 @@ class VariableStressBayesianModel:
             raise RuntimeError(f"Failed to compute posterior summary: {e}")
 
         # Compute convergence statistics (excluding NaN values)
-        valid_rhat = rhat_values.dropna()
+        valid_rhat = rhat_values.dropna().astype(float)
         nan_mask = rhat_values.isna()
         converged_mask = valid_rhat <= threshold
         n_converged = converged_mask.sum()
@@ -1564,9 +1563,9 @@ class VariableStressBayesianModel:
                     color_code = "(constant/deterministic)"
                     print(f"{param:<25}: {'NaN':<6} {status} {color_code}")
                 else:
-                    status = "✓" if rhat <= threshold else "⚠"
-                    color_code = "" if rhat <= threshold else "(!)"
-                    print(f"{param:<25}: {rhat:.4f} {status} {color_code}")
+                    status = "✓" if float(rhat) <= threshold else "⚠"
+                    color_code = "" if float(rhat) <= threshold else "(!)"
+                    print(f"{param:<25}: {float(rhat):.4f} {status} {color_code}")
 
             print("\nConvergence Summary:")
             if n_nan > 0:
